@@ -32,6 +32,25 @@ def test_run_sample_native_geometry():
     assert res["source"] == "geometry_native"
 
 
+def test_convert_pdf_returns_elements(monkeypatch, tmp_path):
+    """convert_pdf 返回契约必须含 elements (benchmark --level pipeline 依赖它, 修复 KeyError)."""
+    import fitz
+
+    from pdf2md import pipeline
+
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=400)
+    page.insert_text(fitz.Point(50, 50), "hello world text content here", fontsize=10)
+    pdf = tmp_path / "t.pdf"
+    doc.save(str(pdf))
+    doc.close()
+    monkeypatch.setattr(pipeline.layout_mod, "detect_layout", lambda *a, **k: [[]])
+    report = pipeline.convert_pdf(str(pdf), str(tmp_path / "out"), max_pages=1, do_ocr=False)
+    assert "elements" in report
+    assert isinstance(report["elements"], list)
+    assert all("page" in p and "items" in p for p in report["elements"])
+
+
 @pytest.mark.skipif(not _SAMPLE.exists(), reason="先运行 scripts/gen_table_benchmark.py")
 def test_run_benchmark_aggregate():
     recs = load_manifest(str(_MANIFEST))

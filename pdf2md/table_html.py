@@ -75,11 +75,16 @@ def make_table(texts: list[list[str]]) -> Table:
     return Table(rows, cols, cells)
 
 
+_MAX_SPAN = 100  # rowspan/colspan 硬上限, 防不可信 HTML 资源耗尽
+_MAX_TABLE_ROWS = 5000  # 表格行数硬上限 (防御性)
+_MAX_TABLE_COLS = 200  # 表格列数硬上限 (防御性)
+
+
 def _attr_int(attrs, name: str, default: int = 1) -> int:
     for k, v in attrs:
         if k == name:
             try:
-                return max(1, int(str(v).strip()))
+                return min(_MAX_SPAN, max(1, int(str(v).strip())))
             except (TypeError, ValueError):
                 return default
     return default
@@ -173,7 +178,8 @@ def parse_html_table(html: str) -> Table | None:
     # rows/cols 覆盖所有单元格的 span 范围 → expanded()/cell() 永不越界
     rows = max((r + cell.rowspan for (r, _), cell in parser._cells.items()), default=0)
     cols = max((c + cell.colspan for (_, c), cell in parser._cells.items()), default=0)
-    if rows < 1 or cols < 1:
+    # 硬上限 (防御性): 超限表格降级为 None, 防不可信 HTML 构建巨型网格
+    if rows < 1 or cols < 1 or rows > _MAX_TABLE_ROWS or cols > _MAX_TABLE_COLS:
         return None
     return Table(rows, cols, parser._cells)
 

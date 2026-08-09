@@ -117,6 +117,7 @@ def cmd_info(pdf: str) -> dict:
             info["stats"] = r.get("stats", {})
             info["pages"] = r.get("pages")
             info["coverage"] = r.get("coverage")
+            info["pdf_profile"] = r.get("pdf_profile")  # 模式/瓶颈/建议
         except Exception:
             pass
     print(json.dumps(info, ensure_ascii=False))

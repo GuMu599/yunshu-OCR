@@ -124,6 +124,12 @@ def test_cell_cer_exact_zero():
     assert cell_cer(html, html) == 0.0
 
 
+def test_teds_huge_table_no_crash():
+    # 1200 行表 → 超过节点守卫 → 返回 0.0 而非 RecursionError
+    html = "<table>" + "<tr><td>a</td></tr>" * 1200 + "</table>"
+    assert teds(html, html) == 0.0
+
+
 def test_cell_cer_incompatible_one():
     assert cell_cer("<table><tr><td>a</td></tr></table>", "no table") == 1.0
 

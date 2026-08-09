@@ -35,6 +35,29 @@ def test_merge_table_items_keep_all_when_no_repeat_header():
     assert merged.rows == 4  # 无重复表头 → 全部保留
 
 
+def test_merge_rejects_different_tables_same_cols():
+    # Revenue 表 vs Cost 表 (同列数、表头不同) → 不合并 (防误并)
+    a = _item(table_to_html(make_table([["Revenue", "Q1"], ["A", "1"], ["B", "2"]])), [0, 0, 0, 0])
+    b = _item(table_to_html(make_table([["Cost", "Q1"], ["C", "1"], ["D", "2"]])), [0, 0, 0, 0])
+    assert merge_table_items(a, b) is None
+
+
+def test_merge_rejects_col_type_mismatch():
+    # 数字表 vs 文本表 → 列类型签名不同 → 不合并
+    a = _item(table_to_html(make_table([["x", "1"], ["y", "2"]])), [0, 0, 0, 0])
+    b = _item(table_to_html(make_table([["ab", "cd"], ["ef", "gh"]])), [0, 0, 0, 0])
+    assert merge_table_items(a, b) is None
+
+
+def test_merge_allows_data_continuation():
+    # 无表头重复的数据延续 (APS 式) → 合并
+    a = _item(table_to_html(make_table([["Method", "B/GPa"], ["f-band", "39.8"], ["PBE", "29.2"]])), [0, 0, 0, 0])
+    b = _item(table_to_html(make_table([["GGA", "30.2"], ["Expt", "14.8"]])), [0, 0, 0, 0])
+    m = merge_table_items(a, b)
+    assert m is not None
+    assert parse_html_table(m["html"]).rows == 5
+
+
 def test_merge_table_items_rejects_col_mismatch():
     a = _item(table_to_html(make_table([["H1", "H2"], ["1", "a"]])), [0, 0, 0, 0])
     b = _item(table_to_html(make_table([["H1", "H2", "H3"], ["1", "a", "x"]])), [0, 0, 0, 0])

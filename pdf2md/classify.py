@@ -106,10 +106,10 @@ def extract_features(raw_text: str, bbox: list[float], page_num: int, page_w: fl
             starts_with_section_number = True
     starts_with_abstract = clean.startswith("摘要") or clean.startswith("Abstract")
     starts_with_keywords = clean.startswith("关键词") or clean.startswith("Keywords")
-    has_author_marker = "∗" in text or "@" in text
+    has_author_marker = any(m in text for m in ("∗", "@", "#", "†", "‡", "+"))
     has_inst_keyword = any(kw in text for kw in _INST_KW)
     has_delimiter = bool(re.search(r"[,;，；]", text))
-    author_marker_count = text.count("∗") + text.count("*")
+    author_marker_count = sum(text.count(m) for m in ("∗", "*", "#", "†", "‡"))
     starts_with_ref_bracket = bool(re.match(r"^\[\d+\]", clean))
     is_boilerplate = any(bp in text for bp in _BOILERPLATE)
 
@@ -157,10 +157,10 @@ def classify(f: RegionFeatures) -> ContentType:
         return ContentType.KEYWORDS
     if f.is_boilerplate:
         return ContentType.AUTHOR
-    # 作者/机构/脚注: 短行 + 机构词/分隔符/标记 → 保留为文本
+    # 作者/机构/脚注: 短行 + 机构词/分隔符/作者标记 (#/†/‡ 中文作者名用) → 保留为文本
     if (f.has_inst_keyword and f.has_delimiter and f.char_count < 350) or \
-       (f.author_marker_count >= 3 and f.has_delimiter and f.char_count < 350) or \
-       (f.has_author_marker and not f.has_inst_keyword):
+       (f.author_marker_count >= 2 and f.char_count < 200 and not f.is_boilerplate) or \
+       (f.has_author_marker and not f.has_inst_keyword and f.char_count < 200):
         return ContentType.AUTHOR
     # 目录块/合并标题 → 正文 (真实标题是单条、无页码)
     if _looks_like_toc_block(f.clean_text):

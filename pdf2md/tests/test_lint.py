@@ -6,6 +6,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from pdf2md.lint import lint_markdown  # noqa: E402
+from pdf2md.normalize import TRUST_BANNER, build_markdown  # noqa: E402
+
+
+def test_trust_banner_present():
+    """MD 顶部必须有不可信数据警示横幅 (提示注入信任边界)."""
+    md = build_markdown({"title": "T"}, [{"page": 1, "items": []}])
+    assert md.startswith("<!--")  # 以注释横幅开头
+    assert TRUST_BANNER in md
+    assert "不可信" in md
 
 
 def test_table_col_mismatch_detected():

@@ -96,6 +96,32 @@ def test_sane_text_table_rejects_hallucinated_columns():
     assert tables_mod._sane_text_table(good, native) is True
 
 
+def test_ocr_failure_is_contained(monkeypatch):
+    """OCR 异常 → recognize_table 返回 None (不拖垮整份 PDF)."""
+    import fitz
+
+    page = fitz.open().new_page(width=400, height=400)
+
+    def _boom(page_, rect, dpi=300):
+        raise RuntimeError("rapidocr engine failed")
+
+    monkeypatch.setattr(tables_mod, "ocr_word_items", _boom)
+    assert tables_mod.recognize_table(page, [0, 0, 400, 400], dpi=300, use_model=False) is None
+
+
+def test_math_region_not_table():
+    """公式区 (LaTeX 密集) → 不建表."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=500)
+    formulas = [r"x = \int_0^1 f(x) dx", r"y = \frac{a}{b} + c", r"z = \sum_{i=1}^n i^2",
+                r"w = \lim_{x\to 0} \frac{\sin x}{x}", r"v = \nabla \times \mathbf{F}"]
+    for i, f in enumerate(formulas):
+        page.insert_text(fitz.Point(40, 50 + i * 18), f, fontsize=10)
+    assert tables_mod.recognize_table(page, [0, 0, 500, 500], dpi=72) is None
+
+
 def test_graph_region_detected_and_degraded():
     # 大量曲线 → 图表, recognize_table 返回 None (不硬建成表格)
     doc = fitz.open()

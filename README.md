@@ -227,6 +227,7 @@ python -m pytest pdf2md/tests/   # pdf2md（92 个，含表格识别/基准/真�
 - [`docs/表格识别强化方案.md`](docs/表格识别强化方案.md) — 表格识别架构与实测
 - [`docs/PDF与Markdown绑定读取技能设计.md`](docs/PDF与Markdown绑定读取技能设计.md) — yunshu-ocr 技能设计
 - `.claude/skills/yunshu-ocr/` — **PDF→Markdown 绑定读取技能**（AI 读 MD、用户操作 PDF）
+- [`docs/VENDORED.md`](docs/VENDORED.md) — vendored 第三方代码/权重供应链记录（来源/版本/许可/哈希）
 
 ---
 

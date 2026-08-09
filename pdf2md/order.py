@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+import fitz
 from copy import deepcopy
 
 
@@ -30,22 +31,20 @@ def _normalized(text) -> str:
     return re.sub(r"\s+|\d+", "", str(text).lower())
 
 
-def order_page_elements(elements: list[dict], *, page_width: float) -> list[dict]:
-    """按阅读顺序重排一页元素, 写入 reading_order (1-based)."""
+def order_page_elements(elements: list[dict], *, page_width: float, gutter_mid=None) -> list[dict]:
+    """按版面阅读顺序重排一页元素, 写入 reading_order (1-based).
+
+    栏感知: 双栏页左栏读完再右栏, 通栏元素按其 y 作分隔带插入 (不再全部置顶)。
+    gutter_mid: 调用方用块级 page_gutter_mid() 预计算 (块多更稳健), 缺省自行检测。
+    """
+    from .reading_order import reading_order_rank
+
     rows = [deepcopy(item) for item in elements]
-    full_width = [item for item in rows if _width(item) >= page_width * 0.72]
-    remaining = [item for item in rows if _width(item) < page_width * 0.72]
-    has_columns = (
-        any(_center_x(i) < page_width * 0.45 for i in remaining)
-        and any(_center_x(i) > page_width * 0.55 for i in remaining)
-    )
-    full_width.sort(key=_vertical_key)
-    if has_columns:
-        left = sorted((i for i in remaining if _center_x(i) < page_width / 2), key=_vertical_key)
-        right = sorted((i for i in remaining if _center_x(i) >= page_width / 2), key=_vertical_key)
-        ordered = full_width + left + right
-    else:
-        ordered = sorted(rows, key=_vertical_key)
+    if not rows:
+        return rows
+    page_rect = fitz.Rect(0, 0, page_width, max(i["bbox_pdf"][3] for i in rows) + 1)
+    rank = reading_order_rank([i["bbox_pdf"] for i in rows], page_rect, gutter_mid=gutter_mid)
+    ordered = sorted(rows, key=lambda i: rank.get(id(i["bbox_pdf"]), 0))
     for index, item in enumerate(ordered, 1):
         item["reading_order"] = index
     return ordered

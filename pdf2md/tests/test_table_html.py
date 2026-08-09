@@ -93,6 +93,19 @@ def test_parse_html_rowspan_colspan():
     assert t.text_at(0, 3) == "b"  # colspan 扩展
 
 
+def test_huge_colspan_capped():
+    # colspan=1000000 → 被钳制到上限, 不构建百万列网格
+    t = parse_html_table('<table><tr><td colspan="1000000">a</td></tr></table>')
+    assert t is not None
+    assert t.cols <= 100
+
+
+def test_huge_row_of_cells_rejected():
+    # 单行 300 个单元格 → 超过列上限 → 拒绝 (防资源耗尽)
+    html = "<table><tr>" + "<td>x</td>" * 300 + "</tr></table>"
+    assert parse_html_table(html) is None
+
+
 def test_parse_html_malformed_tolerant():
     # 缺 </table>、非法 colspan、无 table 标签 → 不抛错
     assert parse_html_table("not a table") is None

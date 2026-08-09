@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from .geometry import boxes_touch
+
 import os
 from pathlib import Path
 
@@ -32,22 +34,6 @@ _VISUAL_TEXT = {"text", "title", "abstract", "list", "reference"}
 _model = None
 
 
-def _tables_touch(a: list[float], b: list[float], gap: float) -> bool:
-    """两表格框是否应合并: 面积重叠, 或竖直相邻 (间隙 ≤ gap) 且水平重叠."""
-    dx = min(a[2], b[2]) - max(a[0], b[0])
-    dy = min(a[3], b[3]) - max(a[1], b[1])
-    if dx > 0 and dy > 0:
-        return True
-    if dx > 0:
-        if a[3] <= b[1]:
-            vgap = b[1] - a[3]
-        elif b[3] <= a[1]:
-            vgap = a[1] - b[3]
-        else:
-            vgap = 0.0
-        return vgap <= gap
-    return False
-
 
 def merge_table_regions(regions: list[dict], gap: float = 20.0) -> list[dict]:
     """合并被 YOLO 切碎/重叠的 table 区域 (同一张表多个框 → 外接矩形).
@@ -59,7 +45,7 @@ def merge_table_regions(regions: list[dict], gap: float = 20.0) -> list[dict]:
     merged: list[dict] = []
     for t in sorted(tables, key=lambda r: (r["bbox_pdf"][1], r["bbox_pdf"][0])):
         for m in merged:
-            if _tables_touch(t["bbox_pdf"], m["bbox_pdf"], gap):
+            if boxes_touch(t["bbox_pdf"], m["bbox_pdf"], gap):
                 b = m["bbox_pdf"]
                 tb = t["bbox_pdf"]
                 m["bbox_pdf"] = [

@@ -153,14 +153,21 @@ def levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
+_MAX_TEDS_NODES = 2000  # 树编辑距离节点上限, 防大表递归崩溃
+
+
 def teds(gold_html: str, pred_html: str) -> float:
     """结构相似度 [0,1]; 任一侧无法解析返回 0."""
     t1 = html_to_tree(gold_html)
     t2 = html_to_tree(pred_html)
     if t1 is None or t2 is None:
         return 0.0
+    n1 = _count(t1)
+    n2 = _count(t2)
+    if n1 + n2 > _MAX_TEDS_NODES:
+        return 0.0  # 超大表: 记忆化递归过深 → 降级, 不崩溃
     ted = tree_edit_distance(t1, t2)
-    total = _count(t1) + _count(t2)
+    total = n1 + n2
     return max(0.0, 1.0 - ted / max(1, total))
 
 

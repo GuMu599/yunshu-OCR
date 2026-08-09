@@ -26,6 +26,11 @@ def _print_report(report: dict) -> None:
     print(f"输出: {report['markdown_path']}")
     print(f"元数据: 标题={report['meta'].get('title','')[:50]!r} "
           f"年份={report['meta'].get('year') or '-'} 作者={report['meta'].get('authors','')[:40]!r}")
+    prof = report.get("pdf_profile")
+    if prof:
+        print(f"PDF 预检: 模式={prof.get('mode')} 瓶颈={prof.get('bottleneck')} "
+              f"(文字页比 {prof.get('text_pages_ratio')} 图比 {prof.get('image_pages_ratio')} "
+              f"公式密度 {prof.get('formula_density')})")
     print(f"元素统计: 文本块={s['text_regions']} 图片={s['images']} 表格MD={s['tables']} "
           f"表格图片={s['table_images']} 公式={s['formulas']} "
           f"(不确定={s['formula_uncertain']} 降级图={s['formula_fallback_images']}) OCR页={s['ocr_pages']}")

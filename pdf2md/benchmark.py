@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import fitz  # noqa: E402
 
+from pdf2md.geometry import intersect_area
 from pdf2md.teds import cell_cer, teds  # noqa: E402
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -102,7 +103,7 @@ def run_pipeline_level(recs: list[dict], **kw) -> dict:
             for it in p["items"]:
                 if it["type"] != "table" or bbox is None:
                     continue
-                overlap = _intersect(it["bbox_pdf"], bbox)
+                overlap = intersect_area(it["bbox_pdf"], bbox)
                 if overlap > 0 and it.get("html"):
                     found = True
                     v = teds(rec["gold_html"], it["html"])
@@ -111,11 +112,6 @@ def run_pipeline_level(recs: list[dict], **kw) -> dict:
     return {"aggregate": {"recall": round(sum(1 for r in results if r["recall"]) / max(1, len(results)), 4)},
             "samples": results}
 
-
-def _intersect(a, b) -> float:
-    dx = min(a[2], b[2]) - max(a[0], b[0])
-    dy = min(a[3], b[3]) - max(a[1], b[1])
-    return dx * dy if dx > 0 and dy > 0 else 0.0
 
 
 def main() -> int:

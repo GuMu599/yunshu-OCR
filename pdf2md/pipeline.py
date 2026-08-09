@@ -13,25 +13,17 @@ from collections import Counter
 import fitz
 
 from . import classify, formulas, layout as layout_mod, normalize, ocr as ocr_mod, order as order_mod
-from . import sidecar, tables as tables_mod, text as text_mod, textloss
+from . import pdf_profile, reading_order, sidecar, tables as tables_mod, text as text_mod, textloss
+from .geometry import overlaps_any
 from .table_html import MERGE_EXPAND
+
+
+MIN_PIX2TEX_FORMULAS = 3  # 公式门控: YOLO formula 区 < 该值 → 不加载 pix2tex
 
 
 def _is_textlike(vc: str) -> bool:
     return vc in ("text", "title", "abstract", "list", "reference", "unknown")
 
-
-def _overlaps_any(a: list[float], others: list[list[float]], thr: float = 0.5) -> bool:
-    """a 是否与 others 任一区域重叠 ≥ thr 比例."""
-    area_a = (a[2] - a[0]) * (a[3] - a[1])
-    if area_a <= 0:
-        return False
-    for b in others:
-        dx = min(a[2], b[2]) - max(a[0], b[0])
-        dy = min(a[3], b[3]) - max(a[1], b[1])
-        if dx > 0 and dy > 0 and dx * dy / area_a >= thr:
-            return True
-    return False
 
 
 def _item_id(page: int, kind: str, n: int) -> str:
@@ -104,7 +96,14 @@ def _extract_metadata(pages_items: list[list[dict]]) -> dict:
                 continue
             ct = it.get("content_type")
             if ct == classify.ContentType.AUTHOR:
-                author_cands.append(t)
+                # 过滤非作者名: DOI / 机构 (研究所/大学等) / 脚注 (注./收稿/基金) / 长文本
+                if (len(t) <= 120
+                        and "DOI" not in t
+                        and "10.7498" not in t
+                        and not any(kw in t for kw in ("研究所", "大学", "学院", "实验室",
+                                                       "University", "Institute", "Department", "Hospital"))
+                        and not t.lstrip().startswith(("注", "收稿", "基金", "Received", "©", "(", "("))):
+                    author_cands.append(t)
             elif ct == classify.ContentType.BODY and re.fullmatch(r"[A-Z.\-'\s]+", t) \
                     and t.isupper() and 3 <= len(t) <= 60 and not any(w in t for w in _VENUE_STOP):
                 author_cands.append(t)
@@ -153,6 +152,7 @@ def convert_pdf(
     n_pages = len(doc) if max_pages is None else min(max_pages, len(doc))
     page_rects = [doc[i].rect for i in range(n_pages)]
     page_heights = {i + 1: doc[i].rect.height for i in range(n_pages)}
+    profile = pdf_profile.profile_pdf(pdf_path)  # 预检 PDF 类型 (原生/扫描/混合)
 
     # ── 1. YOLO 版面 ──
     all_regions = layout_mod.detect_layout(pdf_path, max_pages=n_pages)
@@ -160,13 +160,16 @@ def convert_pdf(
     # ── 1.5 无框表候选 (YOLO 漏检补丁): 原生文字网格 → 几何阶梯验证 ──
     for pno in range(n_pages):
         yolo_tables = [r["bbox_pdf"] for r in all_regions[pno] if r["visual_class"] == "table"]
+        text_cands: list[list[float]] = []
         for cand in tables_mod.detect_text_table_candidates(doc[pno]):
-            if not _overlaps_any(cand, yolo_tables):
-                all_regions[pno].append({
-                    "page": pno + 1, "bbox_pdf": cand,
-                    "visual_class": "table", "confidence": None, "detector": "text",
-                })
-
+            # 与 YOLO 表区或已加入的文本候选重叠 → 跳过 (互去重, 防重复处理)
+            if overlaps_any(cand, yolo_tables) or overlaps_any(cand, text_cands):
+                continue
+            text_cands.append(cand)
+            all_regions[pno].append({
+                "page": pno + 1, "bbox_pdf": cand,
+                "visual_class": "table", "confidence": None, "detector": "text",
+            })
     # ── 2. 逐页提取元素 ──
     elements_by_page: list[list[dict]] = []
     stats = {
@@ -176,12 +179,26 @@ def convert_pdf(
     }
     formula_detected_anywhere = False
     h1_used = False
-    use_formula_model = formula_engine in ("auto", "pix2tex")
+    # 公式门控: YOLO formula 区域少 (< MIN_PIX2TEX_FORMULAS) → 跳过 pix2tex (省 ~27s 模型加载),
+    # 直接走 RapidOCR + 符号映射兜底。pix2tex 仅在公式多的文档才值得加载。
+    if formula_engine == "pix2tex":
+        use_formula_model = True
+    elif formula_engine == "rapidocr":
+        use_formula_model = False
+    else:  # auto
+        yolo_formulas = sum(
+            1 for pr in all_regions for r in pr if r["visual_class"] == "formula"
+        )
+        use_formula_model = yolo_formulas >= MIN_PIX2TEX_FORMULAS
 
     for pno in range(n_pages):
         page = doc[pno]
         pw, ph = page_rects[pno].width, page_rects[pno].height
         items: list[dict] = []
+        page_drawings = None  # get_drawings 页级缓存 (懒加载, 防每候选重复整页解析)
+        # 版面阅读顺序: 页内文字块栏感知重排 (双栏左读完再右栏)
+        page_blocks = [b for b in page.get_text("blocks") if b[6] == 0 and b[4].strip()]
+        gutter_mid = reading_order.page_gutter_mid(page_blocks)  # 块级栏距 (稳健)
 
         for r in all_regions[pno]:
             rect = r["bbox_pdf"]
@@ -209,9 +226,12 @@ def convert_pdf(
 
             if vc == "table":
                 min_q = 0.75 if r.get("detector") == "text" else 0.0
+                if page_drawings is None:
+                    page_drawings = page.get_drawings()
                 frag = tables_mod.recognize_table(
                     page, rect,
                     dpi=dpi, do_ocr=do_ocr, use_model=use_table_model, merge_policy=merge_policy,
+                    drawings=page_drawings,
                 )
                 if frag is not None and min_q and (frag.get("structure_quality") or 0) < min_q:
                     frag = None  # 文字网格候选: 质量未达高门槛 → 按散文/图片兜底
@@ -316,7 +336,7 @@ def convert_pdf(
                 continue
 
             if _is_textlike(vc):
-                raw = text_mod.region_text(page, rect)
+                raw = text_mod.region_text_ordered(page, rect, gutter_mid)
                 if not raw or len(raw) < 3:
                     continue
                 if _text_already_present(items, raw):
@@ -408,11 +428,18 @@ def convert_pdf(
         footers = [it for it in items if it["type"] == "footer"]
         rest = [it for it in items if it["type"] not in ("header", "footer")]
         if pno == 0:
+            # 首页: 按 PAGE0 结构 (标题/摘要/正文) 分组, 组内用栏感知 rank (先左后右, 不再按 y 交错)
+            page_rect = fitz.Rect(0, 0, page_rects[pno].width, page_heights[pno + 1])
+            rank0 = reading_order.reading_order_rank(
+                [i["bbox_pdf"] for i in rest], page_rect, gutter_mid=gutter_mid
+            )
             ordered_rest = sorted(rest, key=lambda i: (
-                classify.PAGE0_ORDER.get(i.get("content_type"), _type_priority(i)), i["bbox_pdf"][1]
+                classify.PAGE0_ORDER.get(i.get("content_type"), _type_priority(i)),
+                rank0.get(id(i["bbox_pdf"]), 0),
             ))
         else:
-            ordered_rest = order_mod.order_page_elements(rest, page_width=page_rects[pno].width)
+            ordered_rest = order_mod.order_page_elements(rest, page_width=page_rects[pno].width,
+                                                       gutter_mid=gutter_mid)
         ordered = headers + ordered_rest + footers
         for idx, it in enumerate(ordered, 1):
             it["reading_order"] = idx
@@ -441,6 +468,7 @@ def convert_pdf(
     sidecar.write_sidecar(output_dir, {
         "pdf": pdf_path,
         "pages": n_pages,
+        "pdf_profile": profile,
         "meta": meta,
         "stats": stats,
         "formula_detected": formula_detected,
@@ -454,6 +482,8 @@ def convert_pdf(
         "markdown_path": md_path,
         "markdown": markdown,
         "output_dir": output_dir,
+        "elements": [{"page": p["page"], "items": p["items"]} for p in ordered_pages],
+        "pdf_profile": profile,
         "stats": stats,
         "coverage": coverage,
         "meta": meta,
