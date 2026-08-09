@@ -35,7 +35,10 @@
 - **pdf2md**
   - 全离线转换，不消耗任何 LLM token
   - 版面检测（doclayout_yolo）→ 文字/图片/表格提取 → 内容分类 → 阅读顺序 → 规范化 Markdown
-  - 公式识别：pix2tex（图像→LaTeX）优先，缺失时自动回退 RapidOCR + 符号映射
+  - **双栏阅读顺序**：栏距检测 + 栏感知排序（左栏读完再右栏，单栏自动回退全局 y 序）
+  - **PDF 预检档案**：采样判断原生/扫描/混合，预估耗时瓶颈（report.json / CLI 提示）
+  - **公式识别**：pix2tex 优先；公式少自动跳过（省 ~27s 模型加载）；缺失回退 RapidOCR + 符号映射
+  - **表格识别**：策略阶梯（几何/PyMuPDF/OCR 位图救援/SLANet 模型）+ 图表/位图守卫防误判；跨页续表保守合并
   - 输出自带溯源（`layout.json`）与转换报告（`report.json`）
 
 ---
@@ -64,26 +67,34 @@ yunshu-OCR/
 │       └── rapidocr/models/      #   PP-OCRv4 det/rec + cls onnx 权重、字典、字体
 │
 ├── pdf2md/                       # ◀ 组件二：PDF→Markdown
-│   ├── cli.py                    #   CLI 入口
-│   ├── pipeline.py               #   转换主链路
+│   ├── cli.py / pipeline.py      #   CLI 入口 / 转换主链路
 │   ├── layout.py                 #   版面检测（doclayout_yolo）
-│   ├── text.py / tables.py       #   文字、表格提取
-│   ├── classify.py / order.py    #   内容分类、阅读顺序/页眉页脚
-│   ├── formulas.py               #   公式识别（pix2tex 优先）
-│   ├── ocr.py                    #   OCR 兜底（复用 vendored 适配器）
-│   ├── normalize.py / lint.py    #   Markdown 规范化与质量 lint
-│   ├── sidecar.py / textloss.py  #   溯源与文字不丢失检测
+│   ├── reading_order.py          #   双栏栏距检测 + 栏感知阅读顺序
+│   ├── pdf_profile.py            #   PDF 预检档案（原生/扫描/混合 + 瓶颈）
+│   ├── tables.py                 #   表格策略阶梯（再导出各子模块）
+│   ├── table_geometry.py         #   表格几何重建（行列聚类/质量/对齐）
+│   ├── table_detect.py           #   无框表候选 / 图表/位图/散文/公式守卫
+│   ├── table_merge.py            #   跨页续表合并（表头相似度门槛）
+│   ├── table_html.py / table_model.py  #   Table 模型 / SLANet 结构引擎
+│   ├── teds.py / benchmark.py    #   表格质量度量 / 基准
+│   ├── classify.py / order.py    #   内容分类 / 阅读顺序
+│   ├── formulas.py / ocr.py      #   公式识别 / OCR 兜底
+│   ├── normalize.py / lint.py    #   Markdown 规范化 / 质量 lint
+│   ├── sidecar.py / textloss.py  #   溯源 / 文字不丢失
 │   └── README.md                 #   组件独立文档（输出契约、实测结果）
 │
 ├── scripts/
 │   └── ocr_demo.py               # OCR 真实输出检测 demo
 │
 ├── tests/                        # OCR 工具集测试（10 个）
-├── pdf2md/tests/                 # pdf2md 测试（22 个）
+├── pdf2md/tests/                 # pdf2md 测试（109 个）
 │
 └── docs/
     ├── OCR流程完整说明.md           # OCR 流程、置信度门禁、排错
-    └── PDF转Markdown零token工具实现计划.md
+    ├── PDF转Markdown零token工具实现计划.md  # pdf2md 设计决策
+    ├── 表格识别强化方案.md           # 表格识别架构与实测
+    ├── PDF与Markdown绑定读取技能设计.md    # yunshu-ocr 技能设计
+    └── VENDORED.md                 # vendored 供应链记录
 ```
 
 ---
@@ -209,12 +220,12 @@ python -m pytest pdf2md/tests/      # pdf2md 单元测试
 ## 测试
 
 ```powershell
-# 全量（102 个测试）
+# 全量（119 个测试）
 python -m pytest tests/ pdf2md/tests/
 
 # 按组件
 python -m pytest tests/          # OCR 工具集（10 个）
-python -m pytest pdf2md/tests/   # pdf2md（92 个，含表格识别/基准/真实样本回归）
+python -m pytest pdf2md/tests/   # pdf2md（109 个，含表格识别/基准/阅读顺序/真实样本回归）
 ```
 
 ---
@@ -264,7 +275,8 @@ python -m pytest pdf2md/tests/   # pdf2md（92 个，含表格识别/基准/真�
 
 - 当前只有 RapidOCR 单模型，系统置信度上限 0.94，低置信度结果需人工复核。
 - 复杂表格、公式和部分旧式扫描件可能无法自动恢复（OCR 兜底页带 `<!-- ocr:page -->` 标记供复核）。
-- 公式主引擎 pix2tex 对等式编号、`v/y/ν` 等偶有误读；RapidOCR 兜底是"近似 LaTeX"。
-- **表格识别**：策略阶梯（原生几何 → PyMuPDF 有框表 → OCR 几何位图表救援 → SLANet 结构模型 → 图片+标记）。图片型表格现可经 OCR 几何重建转 MD；合并单元格 MD 用展开复制表达（无损 HTML 入 layout.json）。详见 `docs/表格识别强化方案.md`。
-- 跨页续表已按保守规则合并（前页靠底 + 后页靠顶 + 列结构一致）。
-- YOLO 版面分类仍会把部分图表/目录误判为 table（图注/轴标签区域），由阶梯的质量门与降级兜底处理，彻底解决需版面层调优。
+- 公式主引擎 pix2tex 对等式编号、`v/y/ν` 等偶有误读；**复杂公式图 OCR 可能产出乱码 LaTeX**（`is_real_formula` 守卫部分拦截）；RapidOCR 兜底是"近似 LaTeX"。
+- **表格识别**：策略阶梯（原生几何 → PyMuPDF 有框表 → OCR 几何位图表救援 → SLANet 结构模型 → 图片+标记）。图片型表格可经 OCR 重建转 MD；合并单元格 MD 用展开复制（无损 HTML 入 layout.json）。**图表/位图守卫**防曲线图与显微照片被误判成表格。详见 `docs/表格识别强化方案.md`。
+- 跨页续表已按保守规则合并（表头相似度门槛防误并）。
+- **双栏阅读顺序**：栏距检测 + 左栏先右栏（单栏自动回退全局 y 序）。YOLO 偶把左右栏合并成通栏区域时会产生句界冗余段，需版面层区域合并根治。
+- 图/表多的论文转换较慢（每区域触发提取），预检会提示瓶颈。
