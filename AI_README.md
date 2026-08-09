@@ -11,11 +11,12 @@
 
 | 能力 | 可靠度 | 说明 |
 |---|---|---|
-| 原生文字 PDF → MD | 高 | PyMuPDF 提取 + 版面检测 + 阅读顺序 |
+| 原生文字 PDF → MD | 高 | PyMuPDF 提取 + 版面检测 + **双栏阅读顺序**（栏距检测，左栏读完再右栏，单栏自动回退） |
 | 表格 → MD 表格 | 中高 | 策略阶梯：原生几何 → PyMuPDF 有框表 → OCR 几何(位图表) → SLANet 模型 → 图片+标记。合并单元格用展开复制(数据不丢)，无损 HTML 在 layout.json |
-| 公式 → LaTeX | 中 | pix2tex 优先，RapidOCR+符号映射兜底；等式编号/个别符号可能误读 |
+| 公式 → LaTeX | 中 | pix2tex 优先（公式少自动跳过省加载），RapidOCR+符号映射兜底；等式编号/个别符号可能误读 |
 | 扫描件/图片型页 → 文本 | 中 | 整页 OCR 兜底，带 `<!-- ocr:page -->` 标记 |
-| 图表/图片 | — | 存 `images/`，MD 引用；图表区域不会被误建成表格（图表守卫） |
+| 图表/图片 | — | 存 `images/`，MD 引用；图表/位图区域不会被误建成表格（矢量图守卫 + 位图图形守卫） |
+| PDF 预检 | 高 | `info` 输出 pdf_profile：原生/扫描/混合 + 耗时瓶颈，AI 据此决定策略 |
 
 ## 怎么调用
 
@@ -36,7 +37,7 @@ python -m pdf2md.benchmark --manifest tests/benchmarks/tables/manifest.jsonl  # 
 ### 3. PDF↔MD 绑定读取（技能 yunshu-ocr，AI 读 PDF 首选）
 ```bash
 python .claude/skills/yunshu-ocr/pdf2md.py ensure "<pdf>"    # 缓存转换，输出 md/layout/report 路径
-python .claude/skills/yunshu-ocr/pdf2md.py info "<pdf>"      # 转换状态/统计/覆盖率
+python .claude/skills/yunshu-ocr/pdf2md.py info "<pdf>"      # 转换状态/统计/覆盖率/预检(mode+瓶颈)
 python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" [--dpi 300]  # 按需渲染局部
 ```
 
@@ -58,9 +59,9 @@ python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" [
 
 ## 可靠性与复核指引
 
-- **可靠**：原生文字提取、简单/中复杂表格（合成基准 TEDS 0.97、质量门控 1.0）、跨页续表合并、图表区域正确降级。
-- **需复核**：低置信公式、降级表格图片、`<!-- ocr:page -->` 页、覆盖率异常的页（report.json 的 `coverage` 有 `flag`）。
-- **已知局限**：YOLO 版面会把部分图表/目录误判为 table（图表守卫 + 质量门已兜底，彻底解决需版面层调优）；相邻窄列偶有合并；SLANet 结构模型在无框表上不如几何（故作最后兜底，非优先）。
+- **可靠**：原生文字提取、**双栏阅读顺序**（左先右）、简单/中复杂表格（合成基准 TEDS 0.97、质量门控 1.0）、跨页续表合并、图表/位图区域正确降级、PDF 预检判型。
+- **需复核**：低置信公式、降级表格图片、`<!-- ocr:page -->` 页、覆盖率异常的页（report.json 的 `coverage` 有 `flag`）、**复杂公式图可能产出乱码 LaTeX**。
+- **已知局限**：YOLO 偶把左右栏合并成通栏区域 → 句界冗余段（版面层区域合并根治）；相邻窄列偶有合并；SLANet 结构模型在无框表上不如几何（故为最后兜底）；图/表多的论文转换慢（预检会给瓶颈提示）。
 
 ## 安全（提示注入）
 
@@ -68,10 +69,11 @@ MD 由**不可信 PDF** 自动生成：正文/表格/公式/OCR 内容原样进�
 
 ## 处理 PDF 的最佳实践
 
-1. **先 `ensure` 转 MD → 读 MD**（省 token，这是主路径）。
-2. 内容对应 PDF 位置 → 读 `layout.json` 的 `page` + `bbox_pdf`。
-3. MD 不足以回答（降级表/公式/低覆盖率）→ `render` 该 bbox 读原文。
-4. 转换失败 → 直接读 PDF，不阻塞。
+1. **先 `info` 看预检**（mode/bottleneck）→ 判断是原生/扫描/混合，决定是否需关注 OCR 内容。
+2. **再 `ensure` 转 MD → 读 MD**（省 token，这是主路径）。
+3. 内容对应 PDF 位置 → 读 `layout.json` 的 `page` + `bbox_pdf`。
+4. MD 不足以回答（降级表/公式/低覆盖率）→ `render` 该 bbox 读原文。
+5. 转换失败 → 直接读 PDF，不阻塞。
 
 ## 环境
 
