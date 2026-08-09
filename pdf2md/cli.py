@@ -52,6 +52,10 @@ def main() -> int:
     parser.add_argument("--formula-engine", default="auto",
                         choices=["auto", "pix2tex", "rapidocr"],
                         help="公式识别引擎: auto=pix2tex优先, rapidocr=符号映射兜底")
+    parser.add_argument("--table-merge", default="expand", choices=["expand", "blank"],
+                        help="复杂表合并单元格在 MD 中的表达: expand=展开复制(默认, 数据零丢失), blank=空白占位")
+    parser.add_argument("--no-table-model", action="store_true",
+                        help="跳过 SLANet 表格结构模型 (复杂表回退几何重建/图片)")
     args = parser.parse_args()
 
     if not Path(args.pdf).exists():
@@ -71,6 +75,7 @@ def main() -> int:
             formula_dpi=args.formula_dpi, do_ocr=not args.no_ocr,
             keep_margins=not args.drop_margins, max_pages=args.max_pages,
             formula_engine=args.formula_engine,
+            use_table_model=not args.no_table_model, merge_policy=args.table_merge,
         )
     except Exception as exc:
         print(f"转换失败: {exc}", file=sys.stderr)

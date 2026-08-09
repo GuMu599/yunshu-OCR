@@ -9,6 +9,7 @@
   3. 标题过长 (>60 字)   → 正文段落被当成标题
   4. 公式块含多个公式编号 → 多条堆叠公式被合并进一个块
   5. 公式块含乱码序列     → OCR 公式错译
+  6. 表格行列数不一致    → 单元格错位/内容有误 (table_col_mismatch)
 退出码: 0 = 干净, 1 = 有问题
 """
 
@@ -66,6 +67,25 @@ def lint_markdown(md: str) -> list[dict]:
             ratio = sum(1 for c in visible if not c.isalnum() and c not in "{}[]()+=-<>,.\\*'|") / len(visible)
             if ratio > 0.45:
                 issues.append({"kind": "formula_garble", "line": ln, "detail": f"符号占比过高 {ratio:.2f}: {body[:70]}"})
+
+    # ── 表格列一致性检查 ──
+    ln = 0
+    while ln < len(lines):
+        if not lines[ln].lstrip().startswith("|"):
+            ln += 1
+            continue
+        counts: list[int] = []
+        start = ln
+        while ln < len(lines) and lines[ln].lstrip().startswith("|"):
+            cells = lines[ln].strip().strip("|").split("|")
+            counts.append(len(cells))
+            ln += 1
+        if len(counts) >= 2 and len(set(counts)) > 1:
+            issues.append({
+                "kind": "table_col_mismatch",
+                "line": start,
+                "detail": f"表格列数不一致 {counts}: {lines[start].strip()[:50]}",
+            })
 
     return issues
 

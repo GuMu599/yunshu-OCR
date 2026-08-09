@@ -2,6 +2,18 @@
 
 独立、离线、零 token 的 PDF OCR 与 PDF→Markdown 工具集。
 
+## 我们解决的用户痛点
+
+| 痛点 | 我们的解法 |
+|---|---|
+| **AI 读 PDF 成本高**：AI 直接消费 PDF（二进制/整页渲染图）token 开销大，且无法结构化读取 | 把 PDF 转成**规范化 Markdown**，AI 只读 MD 省 token；`layout.json` 提供 PDF↔MD 绑定溯源，MD 不足时按需渲染局部 |
+| **表格识别不准**：数据表内容丢失、单元格错位、图片型表格无法提取 | 策略阶梯（原生几何 → PyMuPDF → OCR 几何 → SLANet 模型 → 图片+标记），质量门控绝不硬猜；位图表可经 OCR 重建转 MD |
+| **公式难恢复**：扫描件公式、LaTeX 排版文字层损坏 | pix2tex 优先，RapidOCR + 符号映射兜底 |
+| **隐私与成本**：在线 OCR/LLM 有泄露与费用顾虑 | **全链路离线、CPU 可跑、不消耗任何 LLM token** |
+| **溯源缺失**：转换结果无法对应回 PDF 原文位置 | `layout.json` 逐元素记录 `page` + `bbox_pdf`，可按需渲染定位 |
+
+> 💡 **给 AI 用**：想快速掌握本工具能力、让它直接消费，请看 [`AI_README.md`](AI_README.md)。
+
 本仓库由两个协同组件组成，均可单独使用：
 
 | 组件 | 目录 | 职责 |
@@ -32,9 +44,14 @@
 
 ```text
 yunshu-OCR/
-├── README.md                     # 本文件
+├── README.md                     # 本文件（痛点 + 用法）
+├── AI_README.md                  # 给 AI 直接阅读的能力摘要
 ├── requirements.txt              # OCR 工具集依赖
 ├── .gitignore                    # 排除 __pycache__、模型权重、测试数据
+│
+├── .claude/skills/yunshu-ocr/    # ◀ PDF↔Markdown 绑定读取技能
+│   ├── SKILL.md                  #   技能定义（触发 + 工作流）
+│   └── pdf2md.py                 #   助手（ensure/info/render，输出 JSON）
 │
 ├── tools/                        # ◀ 组件一：OCR 工具集
 │   ├── ocr_worker.py             #   子进程 OCR worker（RSS/超时监控）
@@ -192,20 +209,24 @@ python -m pytest pdf2md/tests/      # pdf2md 单元测试
 ## 测试
 
 ```powershell
-# 全量（32 个测试）
+# 全量（102 个测试）
 python -m pytest tests/ pdf2md/tests/
 
 # 按组件
 python -m pytest tests/          # OCR 工具集（10 个）
-python -m pytest pdf2md/tests/   # pdf2md（22 个）
+python -m pytest pdf2md/tests/   # pdf2md（92 个，含表格识别/基准/真实样本回归）
 ```
 
 ---
 
 ## 文档
 
+- [`AI_README.md`](AI_README.md) — **给 AI 直接阅读的能力摘要**（调用方式、输出契约、可靠性、最佳实践）
 - [`docs/OCR流程完整说明.md`](docs/OCR流程完整说明.md) — OCR 工具集完整流程、置信度门禁与排错
 - [`docs/PDF转Markdown零token工具实现计划.md`](docs/PDF转Markdown零token工具实现计划.md) — pdf2md 设计决策与输出契约
+- [`docs/表格识别强化方案.md`](docs/表格识别强化方案.md) — 表格识别架构与实测
+- [`docs/PDF与Markdown绑定读取技能设计.md`](docs/PDF与Markdown绑定读取技能设计.md) — yunshu-ocr 技能设计
+- `.claude/skills/yunshu-ocr/` — **PDF→Markdown 绑定读取技能**（AI 读 MD、用户操作 PDF）
 
 ---
 
@@ -243,5 +264,6 @@ python -m pytest pdf2md/tests/   # pdf2md（22 个）
 - 当前只有 RapidOCR 单模型，系统置信度上限 0.94，低置信度结果需人工复核。
 - 复杂表格、公式和部分旧式扫描件可能无法自动恢复（OCR 兜底页带 `<!-- ocr:page -->` 标记供复核）。
 - 公式主引擎 pix2tex 对等式编号、`v/y/ν` 等偶有误读；RapidOCR 兜底是"近似 LaTeX"。
-- 图片型表格无法转 MD，降级为表格图片；真实有框文字表可转 MD。
-- 跨页表格 v1 不合并。
+- **表格识别**：策略阶梯（原生几何 → PyMuPDF 有框表 → OCR 几何位图表救援 → SLANet 结构模型 → 图片+标记）。图片型表格现可经 OCR 几何重建转 MD；合并单元格 MD 用展开复制表达（无损 HTML 入 layout.json）。详见 `docs/表格识别强化方案.md`。
+- 跨页续表已按保守规则合并（前页靠底 + 后页靠顶 + 列结构一致）。
+- YOLO 版面分类仍会把部分图表/目录误判为 table（图注/轴标签区域），由阶梯的质量门与降级兜底处理，彻底解决需版面层调优。

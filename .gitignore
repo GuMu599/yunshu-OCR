@@ -6,6 +6,8 @@ __pycache__/
 # 模型权重不提交 git（约 20MB，本地运行需要）
 models/production/rapidocr-adapter/rapidocr/models/*.onnx
 models/production/rapidocr-adapter/rapidocr/models/*.TTF
+models/production/table-adapter/**/*.onnx
+models/production/table-adapter/**/*.TTF
 
 # 测试数据与转换输出（含大 PDF，本地保留不入库）
 测试文件/

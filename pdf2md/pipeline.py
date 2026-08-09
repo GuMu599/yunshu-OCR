@@ -14,10 +14,24 @@ import fitz
 
 from . import classify, formulas, layout as layout_mod, normalize, ocr as ocr_mod, order as order_mod
 from . import sidecar, tables as tables_mod, text as text_mod, textloss
+from .table_html import MERGE_EXPAND
 
 
 def _is_textlike(vc: str) -> bool:
     return vc in ("text", "title", "abstract", "list", "reference", "unknown")
+
+
+def _overlaps_any(a: list[float], others: list[list[float]], thr: float = 0.5) -> bool:
+    """a 是否与 others 任一区域重叠 ≥ thr 比例."""
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    if area_a <= 0:
+        return False
+    for b in others:
+        dx = min(a[2], b[2]) - max(a[0], b[0])
+        dy = min(a[3], b[3]) - max(a[1], b[1])
+        if dx > 0 and dy > 0 and dx * dy / area_a >= thr:
+            return True
+    return False
 
 
 def _item_id(page: int, kind: str, n: int) -> str:
@@ -126,6 +140,8 @@ def convert_pdf(
     keep_margins: bool = True,
     max_pages: int | None = None,
     formula_engine: str = "auto",
+    use_table_model: bool = True,
+    merge_policy: str = MERGE_EXPAND,
 ) -> dict:
     pdf_path = os.path.abspath(pdf_path)
     output_dir = os.path.abspath(output_dir)
@@ -141,12 +157,22 @@ def convert_pdf(
     # ── 1. YOLO 版面 ──
     all_regions = layout_mod.detect_layout(pdf_path, max_pages=n_pages)
 
+    # ── 1.5 无框表候选 (YOLO 漏检补丁): 原生文字网格 → 几何阶梯验证 ──
+    for pno in range(n_pages):
+        yolo_tables = [r["bbox_pdf"] for r in all_regions[pno] if r["visual_class"] == "table"]
+        for cand in tables_mod.detect_text_table_candidates(doc[pno]):
+            if not _overlaps_any(cand, yolo_tables):
+                all_regions[pno].append({
+                    "page": pno + 1, "bbox_pdf": cand,
+                    "visual_class": "table", "confidence": None, "detector": "text",
+                })
+
     # ── 2. 逐页提取元素 ──
     elements_by_page: list[list[dict]] = []
     stats = {
         "images": 0, "tables": 0, "table_images": 0, "formulas": 0,
         "formula_uncertain": 0, "formula_fallback_images": 0, "text_regions": 0,
-        "ocr_pages": 0,
+        "ocr_pages": 0, "table_geometry": 0, "table_model": 0, "table_merged": 0,
     }
     formula_detected_anywhere = False
     h1_used = False
@@ -182,37 +208,47 @@ def convert_pdf(
                 continue
 
             if vc == "table":
-                md = tables_mod.find_table_ruled(page, rect)
-                if md:
+                min_q = 0.75 if r.get("detector") == "text" else 0.0
+                frag = tables_mod.recognize_table(
+                    page, rect,
+                    dpi=dpi, do_ocr=do_ocr, use_model=use_table_model, merge_policy=merge_policy,
+                )
+                if frag is not None and min_q and (frag.get("structure_quality") or 0) < min_q:
+                    frag = None  # 文字网格候选: 质量未达高门槛 → 按散文/图片兜底
+                if frag is not None and min_q and tables_mod._prose_like_table(frag):
+                    frag = None  # 双栏散文被误建成表 → 拒绝, 回退为文本
+                if frag is None and r.get("detector") == "text":
+                    # 文本网格候选被拒 (散文/质量不足) → 恢复为正文文本, 不存表格图片
+                    raw = text_mod.region_text(page, rect)
+                    if raw and len(raw) >= 3 and not _text_already_present(items, raw):
+                        stats["text_regions"] += 1
+                        items.append({
+                            "id": _item_id(pno + 1, "txt", stats["text_regions"]), "page": pno + 1,
+                            "type": "text", "bbox_pdf": rect, "text": raw,
+                            "content_type": classify.ContentType.BODY, "markdown": raw, "confidence": None,
+                        })
+                    continue
+                if frag is not None:
                     stats["tables"] += 1
-                    items.append({
+                    src = frag.get("source", "")
+                    if src in ("geometry_native", "geometry_ocr"):
+                        stats["table_geometry"] += 1
+                    elif src == "structure_model":
+                        stats["table_model"] += 1
+                    item = {
                         "id": _item_id(pno + 1, "tab", stats["tables"]), "page": pno + 1,
-                        "type": "table", "bbox_pdf": rect, "text": "", "content_type": None,
-                        "markdown": md, "confidence": None,
-                    })
+                        "type": "table", "bbox_pdf": rect, "text": frag.get("text", ""),
+                        "content_type": None, "markdown": frag["markdown"],
+                        "confidence": frag.get("confidence"),
+                    }
+                    for extra in ("html", "structure_quality", "cell_confidences", "source"):
+                        if frag.get(extra) is not None:
+                            item[extra] = frag[extra]
+                    items.append(item)
                     continue
                 raw = text_mod.region_text(page, rect)
-                if tables_mod.looks_like_table_data(raw):
-                    md = tables_mod.find_table_text(page, rect)
-                    if md:
-                        stats["tables"] += 1
-                        items.append({
-                            "id": _item_id(pno + 1, "tab", stats["tables"]), "page": pno + 1,
-                            "type": "table", "bbox_pdf": rect, "text": "", "content_type": None,
-                            "markdown": md, "confidence": None,
-                        })
-                        continue
-                    n = stats["table_images"] + 1
-                    rel = text_mod.save_image(page, rect, images_dir, f"page{pno+1:03d}_table_{n:03d}.png", dpi=image_dpi)
-                    if rel:
-                        stats["table_images"] += 1
-                        items.append({
-                            "id": _item_id(pno + 1, "tabi", n), "page": pno + 1,
-                            "type": "table_image", "bbox_pdf": rect, "text": "", "content_type": None,
-                            "markdown": f"![table]({rel})", "confidence": None,
-                        })
-                    continue
-                if raw and len(raw) >= 3 and not _text_already_present(items, raw):
+                if raw and len(raw) >= 3 and not tables_mod.looks_like_table_data(raw) \
+                        and not _text_already_present(items, raw):
                     # YOLO 把散文误判为 table → 恢复为文本
                     stats["text_regions"] += 1
                     items.append({
@@ -221,7 +257,7 @@ def convert_pdf(
                         "content_type": classify.ContentType.BODY, "markdown": raw, "confidence": None,
                     })
                     continue
-                # 图片型表格 (无原生文字) → 表格图片
+                # 最后防线: 图片型表格 → 表格图片 + 标记
                 n = stats["table_images"] + 1
                 rel = text_mod.save_image(page, rect, images_dir, f"page{pno+1:03d}_table_{n:03d}.png", dpi=image_dpi)
                 if rel:
@@ -229,7 +265,7 @@ def convert_pdf(
                     items.append({
                         "id": _item_id(pno + 1, "tabi", n), "page": pno + 1,
                         "type": "table_image", "bbox_pdf": rect, "text": "", "content_type": None,
-                        "markdown": f"![table]({rel})", "confidence": None,
+                        "markdown": f"![table]({rel})\n{tables_mod.IMG_MARKER}", "confidence": None,
                     })
                 continue
 
@@ -342,6 +378,10 @@ def convert_pdf(
 
         elements_by_page.append(items)
 
+    # ── 2.5 跨页续表合并 (保守规则: 前页靠底 + 后页靠顶 + 列结构一致) ──
+    stats["table_merged"] = _merge_cross_page_tables(elements_by_page, page_heights)
+    stats["tables"] -= stats["table_merged"]  # 合并后表数量减少
+
     # ── 3. 元数据 (前 6 页) ──
     meta = _extract_metadata(elements_by_page)
 
@@ -420,6 +460,33 @@ def convert_pdf(
         "formula_detected": formula_detected,
         "elapsed_s": round(time.time() - t0, 1),
     }
+
+
+def _merge_cross_page_tables(elements_by_page: list[list[dict]], page_heights: dict) -> int:
+    """跨页续表合并: 前一页靠底 + 后一页靠顶 + 列结构一致 → 合并为一个表格.
+
+    保守规则防误并: 只合并「前一页底部的表」与「后一页顶部的表」且列数一致。
+    返回合并次数。
+    """
+    merged_count = 0
+    for pno in range(1, len(elements_by_page)):
+        prev_items = elements_by_page[pno - 1]
+        curr_items = elements_by_page[pno]
+        prev_h = page_heights[pno]
+        curr_h = page_heights[pno + 1]
+        for pt in prev_items:
+            if pt["type"] != "table" or pt["bbox_pdf"][3] < prev_h * 0.85:
+                continue
+            for ct in list(curr_items):
+                if ct["type"] != "table" or ct["bbox_pdf"][1] > curr_h * 0.15:
+                    continue
+                merged = tables_mod.merge_table_items(pt, ct)
+                if merged is not None:
+                    pt.update(merged)
+                    curr_items.remove(ct)
+                    merged_count += 1
+                    break
+    return merged_count
 
 
 def _type_priority(item: dict) -> int:
