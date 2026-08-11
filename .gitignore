@@ -2,12 +2,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+tmp/
 
-# 模型权重不提交 git（约 20MB，本地运行需要）
+# 模型权重和 Release 构建产物不提交 git；由固定版本的 GitHub Release 安装
 models/production/rapidocr-adapter/rapidocr/models/*.onnx
 models/production/rapidocr-adapter/rapidocr/models/*.TTF
 models/production/table-adapter/**/*.onnx
 models/production/table-adapter/**/*.TTF
+models/runtime/
+pdf2md-models-*.zip
 
 # 测试数据与转换输出（含大 PDF，本地保留不入库）
 测试文件/

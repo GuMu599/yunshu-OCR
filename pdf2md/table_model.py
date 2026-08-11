@@ -9,9 +9,12 @@ cell 文字由 RapidTable 内部用 vendored RapidOCR 识别 (与 pdf2md/ocr.py 
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
+
+from . import models as model_assets
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ADAPTER = Path(
@@ -26,6 +29,37 @@ _OCR_ADAPTER = Path(
         _REPO_ROOT / "models" / "production" / "rapidocr-adapter",
     )
 ).resolve()
+
+_SLANET_SHA256 = model_assets.load_manifest().by_name("rapidtable").sha256
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def adapter_status() -> dict:
+    path = (_ADAPTER / "rapid_table").resolve()
+    weights = path / "models" / "slanet-plus.onnx"
+    available = path.is_dir() and weights.is_file()
+    result = {"available": available, "path": str(path)}
+    if not available:
+        result["error"] = f"model_missing:table — required weights: {weights}"
+        return result
+    actual = _sha256(weights)
+    if actual != _SLANET_SHA256:
+        return {
+            "available": False,
+            "path": str(path),
+            "error": "model_integrity:table — SHA-256 mismatch: slanet-plus.onnx",
+            "sha256": actual,
+            "expected_sha256": _SLANET_SHA256,
+        }
+    result["verified"] = True
+    return result
 
 
 class TableModel:
@@ -48,9 +82,10 @@ class TableModel:
         if cls._failed:
             return False
         if cls._engine is None:
-            if not (_ADAPTER / "rapid_table").is_dir():
+            status = adapter_status()
+            if not status.get("available"):
                 cls._failed = True
-                cls._error = "model_missing:table — vendored table adapter not found"
+                cls._error = status.get("error") or "model_missing:table"
                 return False
             if str(_ADAPTER) not in sys.path:
                 sys.path.insert(0, str(_ADAPTER))

@@ -1,5 +1,9 @@
 # PDF → Markdown 零 token 独立工具 · 实现计划
 
+> 历史实现计划：其中关于首次运行下载模型的描述已失效。当前安装与离线转换契约以
+> `docs/superpowers/specs/2026-08-11-release-model-distribution-design.md` 和
+> `models/models.lock.json` 为准。
+
 > 版本：v1（2026-08-08）
 > 状态：待批准
 > 目标：不消耗任何 LLM token，把 PDF 转成**规范化的 Markdown**，供后续任意 AI 直接消费。

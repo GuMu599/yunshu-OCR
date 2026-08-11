@@ -88,7 +88,9 @@ def page_gutter_mid(boxes) -> float | None:
     return (l_max + r_min) / 2
 
 
-def reading_order_rank(boxes, page_rect, gutter_mid=None) -> dict[int, int]:
+def reading_order_rank(
+    boxes, page_rect, gutter_mid=None, visual_anchors=None, structural_anchors=None
+) -> dict[int, int]:
     """box 集 → 每个 box 的阅读顺序序号.
 
     通栏块 (跨栏距) 按 y 作分隔带; 栏块按 (带, 列序, y) 排序 (左栏读完再右栏)。
@@ -104,9 +106,42 @@ def reading_order_rank(boxes, page_rect, gutter_mid=None) -> dict[int, int]:
     right: list = []
     full: list = []
     content_w = (max(b[2] for b in boxes) - min(b[0] for b in boxes)) if boxes else 1.0
+    natural_full = [b for b in boxes if (b[2] - b[0]) > 0.7 * content_w]
+    visual_anchor_ids = {id(box) for box in (visual_anchors or [])}
+    full_visual_anchors = [box for box in natural_full if id(box) in visual_anchor_ids]
+    full_ids = {id(box) for box in natural_full}
+    structural = [box for box in (structural_anchors or []) if id(box) not in full_ids]
+    changed = True
+    while changed:
+        changed = False
+        for candidate in structural:
+            if id(candidate) in full_ids:
+                continue
+            for anchor in boxes:
+                if id(anchor) not in full_ids or anchor[1] < candidate[3]:
+                    continue
+                if anchor[1] - candidate[3] <= 30.0:
+                    full_ids.add(id(candidate))
+                    changed = True
+                    break
+    companion_ids: set[int] = set()
+    for candidate in boxes:
+        if candidate in natural_full:
+            continue
+        candidate_width = candidate[2] - candidate[0]
+        candidate_height = candidate[3] - candidate[1]
+        if candidate_height > max(40.0, page_rect.height * 0.05):
+            continue
+        for anchor in full_visual_anchors:
+            horizontal_overlap = max(0.0, min(candidate[2], anchor[2]) - max(candidate[0], anchor[0]))
+            overlap_fraction = horizontal_overlap / max(1.0, candidate_width)
+            vertical_gap = max(anchor[1] - candidate[3], candidate[1] - anchor[3], 0.0)
+            if overlap_fraction >= 0.8 and vertical_gap <= 24.0:
+                companion_ids.add(id(candidate))
+                break
     for b in boxes:
         cx = (b[0] + b[2]) / 2
-        if (b[2] - b[0]) > 0.7 * content_w:
+        if id(b) in full_ids or id(b) in companion_ids:
             full.append(b)  # 真通栏 (标题/摘要/图, 宽跨内容宽)
         elif cx < gutter_mid:
             left.append(b)
@@ -119,9 +154,18 @@ def reading_order_rank(boxes, page_rect, gutter_mid=None) -> dict[int, int]:
     left.sort(key=lambda b: (b[1], b[0]))
     right.sort(key=lambda b: (b[1], b[0]))
 
-    order: dict[int, int] = {}
-    idx = 0
-    for b in full + left + right:  # 通栏 → 全部左栏 → 全部右栏 (用户期望的"先左后右")
-        order[id(b)] = idx
-        idx += 1
-    return order
+    remaining_left = left
+    remaining_right = right
+    ordered: list = []
+    for anchor in full:
+        anchor_y = anchor[1]
+        above_left = [b for b in remaining_left if (b[1] + b[3]) / 2 < anchor_y]
+        above_right = [b for b in remaining_right if (b[1] + b[3]) / 2 < anchor_y]
+        ordered.extend(above_left)
+        ordered.extend(above_right)
+        remaining_left = [b for b in remaining_left if b not in above_left]
+        remaining_right = [b for b in remaining_right if b not in above_right]
+        ordered.append(anchor)
+    ordered.extend(remaining_left)
+    ordered.extend(remaining_right)
+    return {id(b): i for i, b in enumerate(ordered)}

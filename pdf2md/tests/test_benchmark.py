@@ -45,7 +45,9 @@ def test_convert_pdf_returns_elements(monkeypatch, tmp_path):
     doc.save(str(pdf))
     doc.close()
     monkeypatch.setattr(pipeline.layout_mod, "detect_layout", lambda *a, **k: [[]])
-    report = pipeline.convert_pdf(str(pdf), str(tmp_path / "out"), max_pages=1, do_ocr=False)
+    report = pipeline.convert_pdf(
+        str(pdf), str(tmp_path / "out"), max_pages=1, do_ocr=False, isolate=False
+    )
     assert "elements" in report
     assert isinstance(report["elements"], list)
     assert all("page" in p and "items" in p for p in report["elements"])

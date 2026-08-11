@@ -23,7 +23,6 @@ from rapidocr.inference_engine.base import FileInfo, get_engine
 
 from ..utils.download_file import DownloadFile, DownloadFileInput
 from ..utils.log import logger
-from ..utils.vis_res import VisRes
 from .typings import TextRecInput, TextRecOutput
 from .utils import CTCLabelDecode
 
@@ -142,7 +141,7 @@ class TextRecognizer:
             scores,
             all_word_results,
             elapse,
-            viser=VisRes(lang_type=self.cfg.lang_type, font_path=self.cfg.font_path),
+            viser=None,
         )
 
     def resize_norm_img(self, img: np.ndarray, max_wh_ratio: float) -> np.ndarray:

@@ -52,6 +52,9 @@ class TextRecOutput:
         if self.imgs is None or self.txts is None:
             logger.warning("No image or txts to visualize.")
             return None
+        if self.viser is None:
+            logger.error("vis instance is None")
+            return None
 
         vis_img = self.viser.draw_rec_res(self.imgs, self.txts, self.scores)
 

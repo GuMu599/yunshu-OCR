@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "release": {
+    "repository": "cancelGuMu/yunshu-OCR",
+    "tag": "models-v1",
+    "asset": "pdf2md-models-v1.zip",
+    "url": "https://github.com/cancelGuMu/yunshu-OCR/releases/download/models-v1/pdf2md-models-v1.zip",
+    "size": 185346805,
+    "sha256": "daa85d380551a93f0464950181c3bc29ab16525a55b3a6664108183aa49c9fb0",
+    "unpacked_size": 185344721
+  },
+  "models": [
+    {
+      "name": "layout",
+      "install_path": "models/runtime/layout/doclayout_yolo_docstructbench_imgsz1280_2501.pt",
+      "size": 39772550,
+      "sha256": "1b152460888dc30be6db7f5dfab28bde3dcc999e5202f46187a764a1699c80be",
+      "source": "DocLayout-YOLO DocStructBench checkpoint",
+      "version": "docstructbench-imgsz1280-2501",
+      "license": "AGPL-3.0-only"
+    },
+    {
+      "name": "pix2tex_weights",
+      "install_path": "models/runtime/pix2tex/weights.pth",
+      "size": 102113875,
+      "sha256": "a63d9141c53d266cb682fb5a8bd83bd5cbe283145e0e78ebdc0f895195a1dfaa",
+      "source": "LaTeX-OCR weights release",
+      "version": "v0.0.1",
+      "license": "CC-BY-NC-SA-4.0"
+    },
+    {
+      "name": "pix2tex_resizer",
+      "install_path": "models/runtime/pix2tex/image_resizer.pth",
+      "size": 19441973,
+      "sha256": "1c3820659985ad142b526490bb25c23d977176ac2073591b3bddada692718458",
+      "source": "LaTeX-OCR weights release image resizer",
+      "version": "v0.0.1",
+      "license": "CC-BY-NC-SA-4.0"
+    },
+    {
+      "name": "rapidocr_det",
+      "install_path": "models/production/rapidocr-adapter/rapidocr/models/ch_PP-OCRv4_det_infer.onnx",
+      "size": 4745517,
+      "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+      "source": "RapidOCR PP-OCRv4 detection",
+      "version": "PP-OCRv4",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "rapidocr_rec",
+      "install_path": "models/production/rapidocr-adapter/rapidocr/models/ch_PP-OCRv4_rec_infer.onnx",
+      "size": 10857958,
+      "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+      "source": "RapidOCR PP-OCRv4 recognition",
+      "version": "PP-OCRv4",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "rapidocr_cls",
+      "install_path": "models/production/rapidocr-adapter/rapidocr/models/ch_ppocr_mobile_v2.0_cls_infer.onnx",
+      "size": 585532,
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+      "source": "RapidOCR PP-OCR mobile direction classifier",
+      "version": "PP-OCR mobile v2.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "rapidtable",
+      "install_path": "models/production/table-adapter/rapid_table/models/slanet-plus.onnx",
+      "size": 7758305,
+      "sha256": "d57a942af6a2f57d6a4a0372573c696a2379bf5857c45e2ac69993f3b334514b",
+      "source": "RapidTable SLANet Plus",
+      "version": "2.0.0",
+      "license": "Apache-2.0"
+    }
+  ],
+  "release_files": [
+    {
+      "name": "model_assets_notice",
+      "install_path": "models/runtime/licenses/MODEL-ASSETS-NOTICE.md",
+      "source_path": "THIRD_PARTY_LICENSES/MODEL-ASSETS-NOTICE.md",
+      "size": 2281,
+      "sha256": "6bc61f7360cedaf1ca1fd8df348a8a3f5e5b1ed9277b4a4249bba105850c3b21",
+      "source": "yunshu-OCR model attribution and provenance notice",
+      "version": "models-v1",
+      "license": "AGPL-3.0-only"
+    },
+    {
+      "name": "agpl_3_0_license",
+      "install_path": "models/runtime/licenses/AGPL-3.0.txt",
+      "source_path": "LICENSE",
+      "size": 34523,
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "source": "GNU Affero General Public License version 3",
+      "version": "3.0",
+      "license": "AGPL-3.0-only"
+    },
+    {
+      "name": "cc_by_nc_sa_4_0_license",
+      "install_path": "models/runtime/licenses/CC-BY-NC-SA-4.0.txt",
+      "source_path": "THIRD_PARTY_LICENSES/CC-BY-NC-SA-4.0.txt",
+      "size": 20849,
+      "sha256": "1349a4b6148492b44f629e64eed676612e234fe9a839e4f3b277c1482c8849f1",
+      "source": "Creative Commons official legal code",
+      "version": "4.0",
+      "license": "CC-BY-NC-SA-4.0"
+    },
+    {
+      "name": "apache_2_0_license",
+      "install_path": "models/runtime/licenses/Apache-2.0.txt",
+      "source_path": "THIRD_PARTY_LICENSES/Apache-2.0.txt",
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source": "Apache License official text",
+      "version": "2.0",
+      "license": "Apache-2.0"
+    }
+  ]
+}

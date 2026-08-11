@@ -49,7 +49,10 @@
 yunshu-OCR/
 ├── README.md                     # 本文件（痛点 + 用法）
 ├── AI_README.md                  # 给 AI 直接阅读的能力摘要
-├── requirements.txt              # OCR 工具集依赖
+├── requirements.txt              # 运行依赖范围
+├── requirements-lock.txt         # Windows / Python 3.13 已验证运行时版本
+├── requirements-dev.txt          # 维护者测试依赖范围（仅 Git 仓库）
+├── requirements-dev-lock.txt     # 维护者测试依赖锁定（仅 Git 仓库）
 ├── .gitignore                    # 排除 __pycache__、模型权重、测试数据
 │
 ├── .claude/skills/yunshu-ocr/    # ◀ PDF↔Markdown 绑定读取技能
@@ -62,6 +65,7 @@ yunshu-OCR/
 │   ├── page_diagnostics.py       #   页面信号提取与状态诊断
 │   └── resource_limits.py        #   内存/DPI/批量页资源策略
 │
+├── models/models.lock.json       # 固定 Release、文件大小与 SHA-256
 ├── models/production/
 │   └── rapidocr-adapter/         #   vendored RapidOCR 适配器（v3.4.x, onnxruntime）
 │       └── rapidocr/models/      #   PP-OCRv4 det/rec + cls onnx 权重、字典、字体
@@ -86,8 +90,8 @@ yunshu-OCR/
 ├── scripts/
 │   └── ocr_demo.py               # OCR 真实输出检测 demo
 │
-├── tests/                        # OCR 工具集测试（10 个）
-├── pdf2md/tests/                 # pdf2md 测试（109 个）
+├── tests/                        # OCR 工具集测试（仅 Git 仓库）
+├── pdf2md/tests/                 # pdf2md 测试（仅 Git 仓库）
 │
 └── docs/
     ├── OCR流程完整说明.md           # OCR 流程、置信度门禁、排错
@@ -112,14 +116,21 @@ yunshu-OCR/
 ```powershell
 cd E:\Codex\yunshu-OCR
 
-# OCR 工具集依赖
-pip install -r requirements.txt
+# 安装已经固定版本的 Windows / Python 3.13 运行时依赖闭包
+python -m pip install -r requirements-lock.txt
 
-# pdf2md 额外依赖（版面检测 + 公式识别）
-pip install -r pdf2md/requirements.txt
+# 安装 models-v1 Release 中的 7 个模型文件，并逐文件校验大小与 SHA-256
+python -m pdf2md.models install
+python -m pdf2md.models verify
 ```
 
-> **模型权重说明**：RapidOCR 的 `.onnx` 权重（约 16MB）已在本地 `models/production/rapidocr-adapter/rapidocr/models/` 下，开箱即可跑真实 OCR。权重通过 `.gitignore` 排除、**不提交 git**，拷贝/克隆仓库时需一并带上该目录；也可用环境变量 `LITWISE_RAPIDOCR_ADAPTER` 指向其他 RapidOCR 适配器目录。
+安装模型时允许联网访问固定的 GitHub Release；PDF 转换本身默认严格离线，不访问云端 API、
+不下载模型，也不消耗 LLM token。模型缺失、版本不符或校验失败时，转换会在创建输出目录前失败，
+并提示重新运行安装命令。可用 `python -m pdf2md.models status` 随时检查本地状态。
+
+`requirements.txt` 与 `pdf2md/requirements.txt` 保留宽松版本范围；发布运行优先使用
+`requirements-lock.txt`。维护者如需运行测试，再安装 `requirements-dev-lock.txt`。当前锁文件针对
+Windows amd64 / Python 3.13。
 
 ---
 
@@ -189,6 +200,7 @@ python -m pdf2md.cli <input.pdf> --output <out>
 | `--drop-margins` | 保留 | 删除页眉页脚（默认标注保留） |
 | `--no-ocr` | 关 | 跳过 OCR 兜底 |
 | `--formula-engine` | auto | auto / pix2tex / rapidocr |
+| `--offline` | 开 | 严格离线转换（当前始终启用） |
 | `--dpi` / `--formula-dpi` / `--image-dpi` | 220 / 300 / 200 | OCR / 公式 / 图片 DPI |
 | `--max-pages` | 全部 | 只处理前 N 页 |
 
@@ -210,7 +222,6 @@ python -m pdf2md.cli <input.pdf> --output <out>
 
 ```bash
 python -m pdf2md.lint <生成的.md>   # 已知失败模式 lint（目录标题/正文标题/公式合并/公式乱码）
-python -m pytest pdf2md/tests/      # pdf2md 单元测试
 ```
 
 完整参数、实测结果与已知限制见 [`pdf2md/README.md`](pdf2md/README.md)。
@@ -220,12 +231,13 @@ python -m pytest pdf2md/tests/      # pdf2md 单元测试
 ## 测试
 
 ```powershell
-# 全量（119 个测试）
+# 仅适用于 Git 开发仓库；源码 Release 不包含测试文件
+python -m pip install -r requirements-dev-lock.txt
 python -m pytest tests/ pdf2md/tests/
 
 # 按组件
-python -m pytest tests/          # OCR 工具集（10 个）
-python -m pytest pdf2md/tests/   # pdf2md（109 个，含表格识别/基准/阅读顺序/真实样本回归）
+python -m pytest tests/
+python -m pytest pdf2md/tests/
 ```
 
 ---
@@ -246,28 +258,41 @@ python -m pytest pdf2md/tests/   # pdf2md（109 个，含表格识别/基准/阅
 
 本仓库的代码源自内部 litwise 文献阅读家族项目的提取与合并；第三方能力直接复用以下开源项目，在此致谢：
 
+### 项目许可证
+
+除明确标注的第三方代码、模型、字体和其他资产外，本仓库原创代码采用
+[GNU Affero General Public License v3.0 only](LICENSE)（`AGPL-3.0-only`）授权。
+如果修改后的版本通过网络向用户提供服务，AGPL 第 13 条通常要求向这些用户提供对应源代码。
+
+第三方组件继续适用各自的许可证与版权声明，不因仓库级许可证而被重新授权。具体边界见
+[`NOTICE`](NOTICE)、[`docs/VENDORED.md`](docs/VENDORED.md) 和
+[`THIRD_PARTY_LICENSES/`](THIRD_PARTY_LICENSES/)。
+
 ### 直接复用的核心组件
 
 | 开源项目 | 版本 | 用途 | License |
 |---|---|---|---|
 | **RapidOCR** | vendored v3.4.x | 中文/英文 OCR 推理后端（`models/production/rapidocr-adapter/`，onnxruntime CPU） | Apache-2.0 |
 | **PaddleOCR（PP-OCRv4 模型）** | det / rec / cls | 检测、识别、方向分类的 `.onnx` 权重（随适配器落地） | Apache-2.0 |
-| **doclayout_yolo** | ≥ 0.0.2b1 | PDF 版面检测（`pdf2md/layout.py`，YOLOv10 派生） | Apache-2.0 |
-| **pix2tex / LaTeX-OCR** | ≥ 0.1.4 | 公式图片→LaTeX（`pdf2md/formulas.py`，可选，缺失自动回退） | MIT |
+| **doclayout_yolo** | ≥ 0.0.2b1 | PDF 版面检测（`pdf2md/layout.py`，YOLOv10 派生） | AGPL-3.0-only |
+| **pix2tex / LaTeX-OCR** | 0.1.4 | 公式图片→LaTeX（代码 MIT；默认转换所需） | 权重为 CC-BY-NC-SA-4.0 |
 | **PyMuPDF（MuPDF/fitz）** | ≥ 1.23.0 | PDF 渲染与文字/图片提取（`tools/`、`pdf2md/text.py`） | AGPL-3.0 |
 | **ONNX Runtime** | ≥ 1.17.0 | RapidOCR 的推理执行引擎 | MIT |
 
 ### 运行时依赖
 
-`numpy`（BSD-3）、`opencv-python`（Apache-2.0）、`Pillow`（HPND）、`omegaconf`（BSD-3）、`pyclipper`（MIT）、`shapely`（BSD-3）、`colorlog`（MIT）、`requests`（Apache-2.0）、`tqdm`（MIT）、`psutil`（BSD-3）、`pytest`（MIT）。
+`numpy`（BSD-3）、`opencv-python`（Apache-2.0）、`Pillow`（HPND）、`omegaconf`（BSD-3）、`pyclipper`（MIT）、`shapely`（BSD-3）、`colorlog`（MIT）、`requests`（Apache-2.0）、`tqdm`（MIT）、`psutil`（BSD-3）。维护者测试工具另见 `requirements-dev-lock.txt`。
 
 ### 模型与字体
 
-- `.onnx` 权重由 RapidAI 从 PaddleOCR 导出，按 Apache-2.0 条款随 RapidOCR 分发。
-- `FZYTK.TTF`（方正姚体）由 RapidOCR 随包分发，仅用于识别结果可视化，字体版权归其原持有人所有，使用请遵守原授权。
-- pix2tex 权重首次运行时从 HuggingFace 下载（约 90M，一次性）。
+- 7 个运行时权重不进入 Git 历史，由 `models-v1` Release 统一安装；文件级哈希见
+  `models/models.lock.json`，Release ZIP 的供应链记录见 `docs/VENDORED.md`。
+- `.onnx` 权重由 RapidAI 从 PaddleOCR 导出，上游标注为 Apache-2.0。
+- `FZYTK.TTF` 不在 Release 中，转换推理不构造字体可视化器，因此运行不需要该字体。
+- pix2tex 加载代码版本为 0.1.4；两个权重来自上游 v0.0.1 权重 Release，采用
+  `CC-BY-NC-SA-4.0`，转换期间不会再下载。该权重许可证包含非商业限制。
 
-> **许可提示**：本仓库本身尚未声明独立 License；其中直接复用/改写的代码与模型应分别遵循上表所列原项目的授权条款（如 PyMuPDF 为 AGPL-3.0），对外发布前请评估衍生作品的合规要求。
+> **许可提示**：仓库级 `AGPL-3.0-only` 只覆盖本项目有权授权的原创代码；第三方模型分别遵循其原始条款。模型 ZIP 已随附许可与署名材料，但 pix2tex 权重仍仅限非商业使用。详见 [`模型 Release 再分发许可核验`](docs/research/model-release-redistribution-audit-2026-08-11.md)。
 
 ---
 

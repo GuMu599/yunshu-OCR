@@ -22,10 +22,24 @@ def test_merge_overlapping_tables():
     assert len([r for r in out if r["visual_class"] == "text"]) == 1
 
 
-def test_vertical_adjacent_merge():
-    regions = [_t([0, 0, 100, 50]), _t([10, 55, 110, 120])]  # 间隙 5 ≤ 20, 水平重叠
+def test_vertical_adjacent_tables_remain_independent():
+    regions = [_t([0, 0, 100, 50]), _t([10, 55, 110, 120])]
     out = merge_table_regions(regions)
-    assert len([r for r in out if r["visual_class"] == "table"]) == 1
+    assert len([r for r in out if r["visual_class"] == "table"]) == 2
+
+
+def test_broad_container_does_not_merge_two_precise_tables():
+    regions = [
+        _t([0, 0, 100, 220], 0.5),
+        _t([0, 5, 100, 100], 0.7),
+        _t([0, 115, 100, 215], 0.8),
+    ]
+    out = merge_table_regions(regions)
+    tables = [r for r in out if r["visual_class"] == "table"]
+    assert [table["bbox_pdf"] for table in tables] == [
+        [0, 5, 100, 100],
+        [0, 115, 100, 215],
+    ]
 
 
 def test_far_tables_not_merged():

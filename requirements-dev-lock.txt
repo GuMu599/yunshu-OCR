@@ -1,0 +1,6 @@
+# Verified Windows amd64 / Python 3.13 development closure.
+-r requirements-lock.txt
+pytest==9.0.3
+iniconfig==2.3.0
+pluggy==1.6.0
+pygments==2.20.0

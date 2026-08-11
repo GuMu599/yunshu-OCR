@@ -18,10 +18,33 @@
 
 ## 用法
 
-```bash
+```powershell
 cd E:\Codex\yunshu-OCR
+python -m pip install -r requirements-lock.txt
+python -m pdf2md.models install
+python -m pdf2md.models verify
 python -m pdf2md.cli <input.pdf> --output <out>
 ```
+
+模型安装命令允许联网下载固定的 `models-v1/pdf2md-models-v1.zip`，并校验 ZIP 与内部 7 个文件。
+转换默认严格离线，只读取已经验证的本地文件；缺失、篡改或版本不匹配时会在创建输出目录前失败。
+`python -m pdf2md.models status` 可查看每个文件的状态。
+
+高级用法仍可传入 `--layout-model <weights.pt> --layout-model-sha256 <sha256>`；自定义可执行
+`.pt` 权重必须显式提供匹配哈希，转换不会替用户下载。
+
+## 真实 PDF 回归语料（仅 Git 开发仓库）
+
+大型或受版权保护的 PDF 不提交 Git，最终源码 Release 也不包含回归器和测试语料。开发者可复制
+`tests/benchmarks/documents/manifest.example.jsonl`，通过 `pdf_env` 指向本地文件：
+
+```powershell
+$env:PDF2MD_REGRESSION_GRAPHENE = "C:\data\paper.pdf"
+python -m pdf2md.regression --manifest tests\benchmarks\documents\manifest.example.jsonl --offline
+```
+
+回归器检查标题、图片/表格/公式数量、重复文本、禁止类型和关键阅读顺序；它验证结构契约，
+不对整份 Markdown 做脆弱的逐字快照比较。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
@@ -36,7 +59,10 @@ python -m pdf2md.cli <input.pdf> --output <out>
 
 ```bash
 python -m pdf2md.lint <生成的.md>   # 已知失败模式 lint (目录标题/正文标题/公式合并/公式乱码)
-python -m pytest pdf2md/tests/       # 22 个单元测试
+
+# 仅在 Git 开发仓库中：
+python -m pip install -r requirements-dev-lock.txt
+python -m pytest pdf2md/tests/
 ```
 
 ## 实测结果（2026-08-08，真实语料）
@@ -57,7 +83,7 @@ B = \muo(1 + x)H = \muo\murH, (1.19)   # 下标拍平, 数学结构可读
 
 默认 `--formula-engine auto`：**pix2tex (LaTeX-OCR)** 优先，直接输出真 LaTeX
 （分数/下标/矩阵/希腊字母/积分均正确）；不可用时自动回退 RapidOCR + 符号映射。
-pix2tex 权重首次运行从 HuggingFace 下载（约 90M，一次性）。CPU 上每条公式约 1-3s。
+pix2tex 的两个 checkpoint 随固定 Release 安装；转换期间不访问上游。CPU 上每条公式约 1-3s。
 
 ## 已知限制（诚实记录）
 

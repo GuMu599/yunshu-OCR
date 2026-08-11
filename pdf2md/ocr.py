@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import models as model_assets
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ADAPTER = Path(
@@ -20,12 +23,52 @@ _ADAPTER = Path(
 
 _engine = None
 
+_manifest = model_assets.load_manifest()
+_MODEL_SHA256 = {
+    "ch_PP-OCRv4_det_infer.onnx": _manifest.by_name("rapidocr_det").sha256,
+    "ch_PP-OCRv4_rec_infer.onnx": _manifest.by_name("rapidocr_rec").sha256,
+    "ch_ppocr_mobile_v2.0_cls_infer.onnx": _manifest.by_name("rapidocr_cls").sha256,
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def adapter_status() -> dict:
+    path = (_ADAPTER / "rapidocr").resolve()
+    model_dir = path / "models"
+    missing = [name for name in _MODEL_SHA256 if not (model_dir / name).is_file()]
+    available = path.is_dir() and not missing
+    result = {"available": available, "path": str(path)}
+    if not available:
+        result["error"] = f"model_missing:rapidocr — required files under {model_dir}"
+        return result
+    for name, expected in _MODEL_SHA256.items():
+        actual = _sha256(model_dir / name)
+        if actual != expected:
+            return {
+                "available": False,
+                "path": str(path),
+                "error": f"model_integrity:rapidocr — SHA-256 mismatch: {name}",
+                "model": name,
+                "sha256": actual,
+                "expected_sha256": expected,
+            }
+    result["verified"] = True
+    return result
+
 
 def _get_engine():
     global _engine
     if _engine is None:
-        if not (_ADAPTER / "rapidocr").is_dir():
-            raise RuntimeError("model_missing:rapidocr — vendored RapidOCR adapter not found")
+        status = adapter_status()
+        if not status.get("available"):
+            raise RuntimeError(status.get("error") or "model_missing:rapidocr")
         if str(_ADAPTER) not in sys.path:
             sys.path.insert(0, str(_ADAPTER))
         from rapidocr import RapidOCR  # noqa: PLC0415
@@ -93,4 +136,4 @@ def ocr_region_with_boxes(page, rect, dpi: int = 300) -> list[OCRLine]:
 
 def ocr_region(page, rect, dpi: int = 300) -> list[tuple[str, float]]:
     """把页面区域渲染成 PNG 再 OCR. rect 为 PDF 坐标 [x0,y0,x1,y1]."""
-    return [(l.text, l.confidence) for l in ocr_region_with_boxes(page, rect, dpi)]
+    return [(line.text, line.confidence) for line in ocr_region_with_boxes(page, rect, dpi)]

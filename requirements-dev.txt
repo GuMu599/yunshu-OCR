@@ -1,0 +1,3 @@
+# Runtime dependencies plus the maintainer test and lint toolchain.
+-r requirements.txt
+pytest>=7.0.0

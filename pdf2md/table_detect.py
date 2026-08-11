@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import fitz
+import re
 
 from .table_config import (
     CELL_LONG_FRAC,
@@ -24,10 +25,10 @@ def looks_like_table_data(raw: str) -> bool:
     散文段落行很长 (>30), 表格数据行短; 这区分 YOLO 把散文误判为 table 的情况。
     空文字 (图片型表格) 也返回 False。
     """
-    lines = [l.strip() for l in (raw or "").splitlines() if l.strip()]
+    lines = [line.strip() for line in (raw or "").splitlines() if line.strip()]
     if len(lines) < 3:
         return False
-    avg = sum(len(l) for l in lines) / len(lines)
+    avg = sum(len(line) for line in lines) / len(lines)
     return avg < PROSE_LINE_AVG
 
 
@@ -45,7 +46,7 @@ def _block_table_like(text: str) -> bool:
 
     if _CAPTION_RE is None:
         _CAPTION_RE = re.compile(r"^\s*(表\s*\d+|Table\s*\d+|TABLE\s*\d+|Fig\.?\s*\d+|Figure\s*\d+)")
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return False
     if _CAPTION_RE.match(lines[0]):
@@ -101,6 +102,26 @@ def detect_text_table_candidates(page, *, min_blocks: int = 4, gap: float = 20.0
             ])
         i = j
     return cands
+
+
+def split_table_region_by_captions(page, rect: list[float]) -> list[list[float]]:
+    """Split one detector container when native text contains multiple table captions."""
+    region = fitz.Rect(*rect) & page.rect
+    captions = []
+    for block in page.get_text("blocks", clip=region):
+        text = str(block[4] or "").strip()
+        if re.match(r"^(?:表(?:\s*\d+)?|Table\s*\d+\b)", text, re.IGNORECASE):
+            captions.append((float(block[1]), float(block[3])))
+    captions.sort()
+    if len(captions) < 2:
+        return [list(region)]
+    pieces = []
+    for index, (top, _bottom) in enumerate(captions):
+        bottom = captions[index + 1][0] - 2.0 if index + 1 < len(captions) else region.y1
+        piece = fitz.Rect(region.x0, max(region.y0, top - 2.0), region.x1, min(region.y1, bottom))
+        if piece.height > 5:
+            pieces.append(list(piece))
+    return pieces or [list(region)]
 
 
 def is_graph_region(page, rect, drawings=None, threshold: int = GRAPH_LINE_THRESHOLD) -> bool:
@@ -168,19 +189,19 @@ def is_math_region(raw: str) -> bool:
     """区域原生文字是否数学密集 (LaTeX 命令/数学符号占 >MATH_LINE_FRAC 行) → 是公式区, 不应建成表格."""
     import re  # noqa: PLC0415
 
-    lines = [l.strip() for l in (raw or "").splitlines() if l.strip()]
+    lines = [line.strip() for line in (raw or "").splitlines() if line.strip()]
     if len(lines) < 2:
         return False
-    math = sum(1 for l in lines if re.search(r"\\[a-zA-Z]+|[=^_]|\b(int|frac|sum|lim|nabla)\b", l))
+    math = sum(1 for line in lines if re.search(r"\\[a-zA-Z]+|[=^_]|\b(int|frac|sum|lim|nabla)\b", line))
     return math / len(lines) > MATH_LINE_FRAC
 
 
 def sane_text_table(md: str, native: list[WordItem]) -> bool:
     """PyMuPDF text 策略的列数应与原生每行词数吻合 (防轴标签/TOC 幻觉出多列)."""
-    lines = [l for l in md.splitlines() if l.strip().startswith("|")]
+    lines = [line for line in md.splitlines() if line.strip().startswith("|")]
     if len(lines) < 2:
         return False
-    cols = max(len(l.strip().strip("|").split("|")) for l in lines)
+    cols = max(len(line.strip().strip("|").split("|")) for line in lines)
     rows = _row_cluster(native)
     if not rows:
         return False

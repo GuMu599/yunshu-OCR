@@ -43,7 +43,25 @@ def order_page_elements(elements: list[dict], *, page_width: float, gutter_mid=N
     if not rows:
         return rows
     page_rect = fitz.Rect(0, 0, page_width, max(i["bbox_pdf"][3] for i in rows) + 1)
-    rank = reading_order_rank([i["bbox_pdf"] for i in rows], page_rect, gutter_mid=gutter_mid)
+    boxes = [item["bbox_pdf"] for item in rows]
+    visual_anchors = [
+        item["bbox_pdf"] for item in rows
+        if item.get("type") in {"image", "table", "table_image", "formula"}
+    ]
+    structural_anchors = [
+        item["bbox_pdf"] for item in rows
+        if item.get("type") == "text"
+        and item["bbox_pdf"][3] - item["bbox_pdf"][1] <= 40.0
+        and len(str(item.get("text") or "")) <= 80
+        and re.match(r"^\s*(?:[1-9]|1[0-9]|20)(?:[.．]\d+)*\s+\S", str(item.get("text") or ""))
+    ]
+    rank = reading_order_rank(
+        boxes,
+        page_rect,
+        gutter_mid=gutter_mid,
+        visual_anchors=visual_anchors,
+        structural_anchors=structural_anchors,
+    )
     ordered = sorted(rows, key=lambda i: rank.get(id(i["bbox_pdf"]), 0))
     for index, item in enumerate(ordered, 1):
         item["reading_order"] = index

@@ -2,7 +2,9 @@
 # @Author: SWHL
 # @Contact: liekkaskono@163.com
 import logging
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -38,7 +40,22 @@ class DownloadFile:
             return
 
         response = cls._make_http_request(input_params.file_url, logger)
-        cls._save_response_with_progress(response, save_path, logger)
+        with tempfile.NamedTemporaryFile(
+            dir=save_path.parent,
+            prefix=f"{save_path.name}.",
+            suffix=".part",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            cls._save_response_with_progress(response, temporary_path, logger)
+            if input_params.sha256 and not cls.check_file_sha256(temporary_path, input_params.sha256):
+                raise DownloadFileException(
+                    f"Downloaded file checksum mismatch: {input_params.file_url}"
+                )
+            os.replace(temporary_path, save_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     @staticmethod
     def _ensure_parent_dir_exists(path: Path):
@@ -92,7 +109,7 @@ class DownloadFile:
                     progress_bar.update(len(chunk))
                     output_file.write(chunk)
 
-        logger.info("Successfully saved to: %s", save_path)
+        logger.info("Successfully staged download: %s", save_path)
 
     @staticmethod
     def check_file_sha256(file_path: Union[str, Path], gt_sha256: str) -> bool:

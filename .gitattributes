@@ -1,0 +1,21 @@
+# Source Release excludes development-only material. The Git checkout keeps
+# these files for maintainers and regression work.
+/.pytest_cache/ export-ignore
+/.ruff_cache/ export-ignore
+/tmp/ export-ignore
+/测试文件/ export-ignore
+/tests/ export-ignore
+/pdf2md/tests/ export-ignore
+/pdf2md/benchmark.py export-ignore
+/pdf2md/regression.py export-ignore
+/pdf2md/teds.py export-ignore
+/scripts/gen_table_benchmark.py export-ignore
+/requirements-dev.txt export-ignore
+/requirements-dev-lock.txt export-ignore
+/docs/research/formula-coverage-audit-2026-08-11.md export-ignore
+/docs/superpowers/ export-ignore
+*.pdf export-ignore
+*.pth export-ignore
+*.pt export-ignore
+*.onnx export-ignore
+*.ttf export-ignore

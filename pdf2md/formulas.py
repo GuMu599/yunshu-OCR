@@ -10,9 +10,16 @@ texify 模型日后可用时作为升级 (保持 ocr_formula_latex 接口不变)
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
+import os
 import re
+import unicodedata
+from pathlib import Path
+from types import SimpleNamespace
 
 from . import ocr as ocr_mod
+from . import models as model_assets
 
 
 class FormulaModel:
@@ -28,26 +35,94 @@ class FormulaModel:
 
     _model = None
     _failed = False
+    _error: str | None = None
+
+    _manifest = model_assets.load_manifest()
+    _CHECKPOINT_SHA256 = {
+        "weights.pth": _manifest.by_name("pix2tex_weights").sha256,
+        "image_resizer.pth": _manifest.by_name("pix2tex_resizer").sha256,
+    }
+
+    @classmethod
+    def checkpoint_dir(cls) -> Path:
+        return model_assets.model_path("pix2tex_weights").parent
+
+    @classmethod
+    def arguments(cls) -> dict[str, object]:
+        spec = importlib.util.find_spec("pix2tex")
+        if spec is None or not spec.submodule_search_locations:
+            raise RuntimeError("model_missing:pix2tex-package")
+        package = Path(next(iter(spec.submodule_search_locations))).resolve()
+        return {
+            "config": str(package / "model" / "settings" / "config.yaml"),
+            "checkpoint": str(model_assets.model_path("pix2tex_weights")),
+            "no_cuda": True,
+            "no_resize": False,
+        }
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @classmethod
+    def checkpoint_status(cls, checkpoint_dir: str | os.PathLike | None = None) -> dict:
+        """Verify all pickle-backed pix2tex files before importing its loader."""
+        if checkpoint_dir is None:
+            directory = cls.checkpoint_dir()
+        else:
+            directory = Path(checkpoint_dir).expanduser().resolve()
+
+        actual: dict[str, str] = {}
+        for name, expected in cls._CHECKPOINT_SHA256.items():
+            path = directory / name
+            if not path.is_file():
+                return {
+                    "available": False, "error": "model_missing:pix2tex",
+                    "path": str(path),
+                }
+            digest = cls._file_sha256(path)
+            actual[name] = digest
+            if digest != expected:
+                return {
+                    "available": False, "error": "model_integrity:pix2tex",
+                    "path": str(path), "expected_sha256": expected, "sha256": digest,
+                }
+        return {
+            "available": True, "verified": True, "path": str(directory),
+            "sha256": actual,
+        }
 
     @classmethod
     def available(cls) -> bool:
-        try:
-            import pix2tex  # noqa: PLC0415
-            return True
-        except ImportError:
-            return False
+        status = cls.checkpoint_status()
+        cls._error = status.get("error")
+        return bool(status.get("available"))
 
     @classmethod
     def _ensure(cls) -> bool:
         if cls._failed:
             return False
         if cls._model is None:
+            status = cls.checkpoint_status()
+            if not status.get("available"):
+                cls._failed = True
+                cls._error = status.get("error")
+                return False
             try:
+                # Disable update checks and force PyTorch's restricted state-dict
+                # loader before pix2tex imports torch/albumentations.
+                os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+                os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "1"
                 from pix2tex.cli import LatexOCR  # noqa: PLC0415
 
-                cls._model = LatexOCR()
-            except Exception:
+                cls._model = LatexOCR(SimpleNamespace(**cls.arguments()))
+            except Exception as exc:
                 cls._failed = True
+                cls._error = f"model_load:pix2tex:{type(exc).__name__}"
                 return False
         return True
 
@@ -58,11 +133,27 @@ class FormulaModel:
             return None
         try:
             import io  # noqa: PLC0415
+            import random  # noqa: PLC0415
 
+            import numpy as np  # noqa: PLC0415
+            import torch  # noqa: PLC0415
             from PIL import Image  # noqa: PLC0415
 
             img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-            latex = cls._model(img)
+            # The pix2tex preprocessing stack samples random transforms during
+            # inference. Seed every participating RNG for this call and then
+            # restore the caller's state, making identical crops reproducible.
+            python_state = random.getstate()
+            numpy_state = np.random.get_state()
+            try:
+                random.seed(0)
+                np.random.seed(0)
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(0)
+                    latex = cls._model(img)
+            finally:
+                random.setstate(python_state)
+                np.random.set_state(numpy_state)
             return _clean_formula_latex(str(latex)) if latex else None
         except Exception:
             return None
@@ -121,7 +212,100 @@ def to_latex(text: str) -> str:
     return s
 
 
-def ocr_formula_latex(page, rect, dpi: int = 300, use_model: bool = True) -> tuple[str, float, str]:
+_NATIVE_GREEK = {
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
+    "ε": r"\varepsilon", "θ": r"\theta", "λ": r"\lambda", "μ": r"\mu",
+    "ρ": r"\rho", "σ": r"\sigma", "φ": r"\phi", "ω": r"\omega",
+    "Δ": r"\Delta", "∑": r"\sum", "π": r"\pi",
+}
+
+
+def native_formula_latex(raw_text: str) -> str | None:
+    """Recover conservative LaTeX from a born-digital equation text layer.
+
+    Some journal PDFs contain a reliable text layer for equations while the
+    visual glyphs are split across lines (bars, sum bounds, and subscripts).
+    In that case pix2tex can hallucinate the glyph structure.  This helper is
+    deliberately narrow: it only activates for equations containing the
+    characteristic Unicode math glyphs and leaves all other regions to the
+    existing image recognizer.
+    """
+    text = unicodedata.normalize("NFKC", str(raw_text or ""))
+    text = text.replace("\\n", " ").replace("珔", "@BAR@")
+    text = re.sub(r"\s+", " ", text).strip()
+    if "=" not in text or "Δ" not in text:
+        return None
+    text = text.replace("，", ",").replace("－", "-").replace("−", "-")
+
+    # Protect the overbar glyph and the X it belongs to before indexing the
+    # ordinary X tokens below.
+    text = re.sub(r"@BAR@\s*X\s*([A-Za-z])\s*-\s*([0-9a-z]+)", r"@BARSUB@:\1-\2", text)
+    text = re.sub(r"@BAR@\s*X\s*([A-Za-z])", r"@BARSUB@:\1", text)
+
+    # Sum bounds and coefficient arrive as one stacked text run in PyMuPDF.
+    text = re.sub(
+        r"∑\s*k\s*j\s*=\s*1\s*θ\s*([0-9A-Za-z]+)\s*,\s*([A-Za-z])",
+        r"\\sum_{j=1}^{k}\\theta_{\1,\2}", text,
+    )
+
+    # Indexed X tokens: X1,t-1, X2,j, Xt-1, etc.
+    text = re.sub(
+        r"X\s*([0-9A-Za-z]+)\s*,\s*([A-Za-z])\s*-\s*([0-9a-z]+)",
+        r"X_{\1,\2-\3}", text,
+    )
+    text = re.sub(
+        r"X\s*([0-9A-Za-z]+)\s*,\s*([A-Za-z])",
+        r"X_{\1,\2}", text,
+    )
+    text = re.sub(
+        r"X\s*([A-Za-z])\s*-\s*([0-9a-z]+)",
+        r"X_{\1-\2}", text,
+    )
+    text = re.sub(r"X\s*([A-Za-z])", r"X_{\1}", text)
+
+    # Overbar glyphs are emitted separately from their X and subscript.
+    text = re.sub(
+        r"@BARSUB@:([A-Za-z])(?:-([0-9a-z]+))?",
+        lambda m: rf"\bar{{X}}_{{{m.group(1)}{('-' + m.group(2)) if m.group(2) else ''}}}",
+        text,
+    )
+    text = text.replace("@BAR@", r"\bar{X}")
+
+    text = re.sub(
+        r"([cd])([0-9N])\s*(sin|cos)\s*2πkt\s*\(\s*\)\s*T",
+        lambda m: rf"{m.group(1)}_{{{m.group(2)}}}\{m.group(3)}\left(\frac{{2\pi k t}}{{T}}\right)",
+        text,
+    )
+
+    for symbol, latex in _NATIVE_GREEK.items():
+        text = text.replace(symbol, latex)
+    greek_commands = r"(?:alpha|beta|gamma|delta|varepsilon|theta|lambda|mu|rho|sigma|phi|omega)"
+    text = re.sub(
+        rf"(\\{greek_commands})\s*([0-9A-Za-z])\s*,\s*([A-Za-z])",
+        r"\1_{\2,\3}", text,
+    )
+    text = re.sub(rf"(\\{greek_commands})\s*([0-9A-Za-z])", r"\1_{\2}", text)
+    text = re.sub(r"\s*([=+\-(),])\s*", r" \1 ", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    text = re.sub(r"\\(left|right)\s+([()])", r"\\\1\2", text)
+    text = re.sub(r"(\\left\()\s+", r"\1", text)
+    text = re.sub(r"\s+(\\right\))", r"\1", text)
+    text = re.sub(r"(?:\s*[,;])*(?:\s*\(\s*\))+\s*$", "", text).strip()
+    for _ in range(2):
+        text = re.sub(
+            r"\{([^{}]*)\}",
+            lambda m: "{" + re.sub(r"\s*([,=-])\s*", r"\1", m.group(1)) + "}",
+            text,
+        )
+    return text if is_real_formula(text) else None
+
+
+def ocr_formula_latex(
+    page,
+    rect,
+    dpi: int = 300,
+    use_model: bool = True,
+) -> tuple[str, float | None, str]:
     """识别一个公式区域 → (latex, 置信度, 引擎).
 
     公式模型 (pix2tex) 可用时优先 (直接输出 LaTeX, 分数/下标/矩阵正确);
@@ -139,7 +323,9 @@ def ocr_formula_latex(page, rect, dpi: int = 300, use_model: bool = True) -> tup
     if use_model and FormulaModel.available():
         latex = FormulaModel.recognize(png)
         if latex and latex.strip():
-            return latex.strip(), 0.99, "pix2tex"
+            # pix2tex does not expose a calibrated sequence confidence.  A
+            # fabricated 0.99 would mislead report consumers.
+            return latex.strip(), None, "pix2tex"
 
     try:
         out = ocr_mod.ocr_image(png)
@@ -174,18 +360,71 @@ def is_real_formula(latex: str) -> bool:
     # 超长结果 / 超大数组 → 不是单条公式 (框式文本误判, 如目录框)
     if len(latex) > 300:
         return False
+    # pix2tex occasionally emits a mathematically-looking prefix and then
+    # truncates the final group (for example ``\\mu_{2 ,``).  Such output is
+    # not safe to publish as LaTeX; callers will retain the source crop as an
+    # image fallback instead.
+    if latex.count("{") != latex.count("}"):
+        return False
+    if len(re.findall(r"\\begin\s*\{", latex)) != len(re.findall(r"\\end\s*\{", latex)):
+        return False
+    if re.search(r"(?:[_^])\s*\{[^{}]*$", latex):
+        return False
     m = re.search(r"\\begin\{array\}\{([^}]*)\}", latex)
     if m and len(m.group(1)) > 12:
+        return False
+    if m and not re.search(
+        r"[=+<>]|\\(?:frac|int|sum|prod|sqrt|partial|nabla)\b",
+        latex,
+    ):
         return False
     if _MATH_CMDS.search(latex):
         return True
     return any(c in latex for c in _MATH_HINTS)
 
 
+_CAPTION_PREFIX = re.compile(
+    r"^\s*(?:(fig(?:ure)?|scheme)|(table|tab)|([图圖])|([表]))\.??"
+    r"\s*[^0-9A-Za-z\u4e00-\u9fff]{0,4}\s*(\d+|[IVX]+)",
+    re.IGNORECASE,
+)
+
+
+def normalize_caption_text(text: str) -> str:
+    """Normalize Unicode and common PDF extraction noise around caption numbers."""
+    normalized = unicodedata.normalize("NFKC", str(text or ""))
+    normalized = normalized.replace("\u00a0", " ").replace("\u200b", "")
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def caption_kind(text: str) -> str | None:
+    """Return ``figure``/``table`` for tolerant multilingual caption prefixes."""
+    match = _CAPTION_PREFIX.match(normalize_caption_text(text))
+    if not match:
+        return None
+    return "table" if match.group(2) or match.group(4) else "figure"
+
+
 def looks_like_caption(text: str) -> bool:
-    """YOLO 把图注误判为 formula 时, 用原生文字恢复而非 OCR 糟蹋."""
-    t = text.strip()
-    return bool(re.match(r"^(Fig\.?\s|Figure\s|Table\s|Tab\.?\s|Scheme\s|图\s*\d|表\s*\d)", t, re.IGNORECASE))
+    """Detect captions before a formula candidate reaches OCR or pix2tex."""
+    return caption_kind(text) is not None
+
+
+def is_formula_candidate(raw_text: str) -> bool:
+    """Cheap semantic gate used before invoking an expensive formula recognizer."""
+    text = normalize_caption_text(raw_text)
+    if not text or looks_like_caption(text) or len(text) > 300:
+        return False
+    if re.fullmatch(
+        r"(?i)(intensity|wavelength|frequency|binding energy|raman shift|"
+        r"temperature|time|voltage|current|counts?)(?:\s*\([^)]{1,12}\))?",
+        text,
+    ):
+        return False
+    return bool(
+        re.search(r"[=^_±×÷∑∫√<>]|\\(?:frac|sum|int|sqrt|begin|alpha|beta|mu)\b", text)
+        or looks_formula_text(text)
+    )
 
 
 def find_equation_gaps(page, excluded_rects: list[list[float]], max_gaps: int = 8) -> list[list[float]]:
@@ -217,7 +456,13 @@ def find_equation_gaps(page, excluded_rects: list[list[float]], max_gaps: int = 
     return gaps
 
 
-def split_ink_lines(page, rect, dpi: int = 100, merge_gap: int = 6) -> list[list[float]]:
+def split_ink_lines(
+    page,
+    rect,
+    dpi: int = 100,
+    merge_gap: int = 6,
+    vertical_pad_points: float = 5.0,
+) -> list[list[float]]:
     """把空隙区域按墨迹行拆成独立公式行矩形.
 
     空隙带可能含多条堆叠的显示公式; 整体 OCR 会把它们合并成一条。
@@ -257,6 +502,7 @@ def split_ink_lines(page, rect, dpi: int = 100, merge_gap: int = 6) -> list[list
     out: list[list[float]] = []
     scale_x = rect.width / w
     scale_y = rect.height / h
+    pad_y = max(0, int(round(vertical_pad_points / scale_y)))
     for y0, y1 in merged:
         xs = [x for x in range(w) if any(samples[row * w + x] < 128 for row in range(y0, y1))]
         if not xs:
@@ -264,11 +510,91 @@ def split_ink_lines(page, rect, dpi: int = 100, merge_gap: int = 6) -> list[list
         pad = max(2, int(0.02 * w))
         out.append([
             rect.x0 + max(0, min(xs) - pad) * scale_x,
-            rect.y0 + y0 * scale_y,
+            rect.y0 + max(0, y0 - pad_y) * scale_y,
             rect.x0 + min(w, max(xs) + pad) * scale_x,
-            rect.y0 + y1 * scale_y,
+            rect.y0 + min(h, y1 + pad_y) * scale_y,
         ])
     return out
+
+
+def formula_region_parts(page, rect, raw_text: str) -> list[list[float]]:
+    """Split a detector box only when it contains multiple displayed equations."""
+    text = normalize_caption_text(raw_text)
+    if looks_like_caption(text) or text.count("=") < 2:
+        return [list(rect)]
+    parts = split_ink_lines(page, rect, dpi=150)
+    return parts if len(parts) >= 2 else [list(rect)]
+
+
+_INLINE_EQUALITY = re.compile(
+    r"(?<![A-Za-z0-9\u0370-\u03ff])"
+    r"((?:\d+(?:\s*\.\s*\d+)?)?[A-Za-z\u0370-\u03ff]+"
+    r"(?:\s*,\s*[A-Za-z0-9\u0370-\u03ff]+)?"
+    r"(?:\s*[+\-−－*/·×]\s*[A-Za-z0-9\u0370-\u03ff]+)*"
+    r"\s*=\s*"
+    r"(?:\d+(?:\s*\.\s*\d+)?[A-Za-z\u0370-\u03ff]*|"
+    r"[A-Za-z\u0370-\u03ff][A-Za-z0-9\u0370-\u03ff]*)"
+    r"(?:\s*[+\-−－]\s*(?:\d+(?:\s*\.\s*\d+)?[A-Za-z\u0370-\u03ff]*|"
+    r"[A-Za-z\u0370-\u03ff][A-Za-z0-9\u0370-\u03ff]*))?"
+    r"(?:\s*(?:m\s*(?:/\s*s(?:²|\^?2)?|[●·⋅]\s*s\s*(?:[-−－]?\s*2|²))|"
+    r"nm|cm|mm|mA|kV|mV|Hz))?)(?!\s*[/●·⋅])"
+)
+
+_INLINE_GREEK = {
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
+    "ε": r"\varepsilon", "θ": r"\theta", "λ": r"\lambda", "μ": r"\mu",
+    "π": r"\pi", "ρ": r"\rho", "σ": r"\sigma", "φ": r"\phi",
+    "ω": r"\omega", "Δ": r"\Delta", "Σ": r"\Sigma",
+}
+
+
+def _inline_formula_latex(expression: str) -> str:
+    value = unicodedata.normalize("NFKC", expression)
+    value = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", value)
+    value = value.replace("−", "-").replace("－", "-").replace("，", ",")
+    value = re.sub(r"sin(?=[\u0370-\u03ff])", r"\\sin", value)
+    value = re.sub(r"sin(?=[A-Za-z])", r"\\sin ", value)
+    value = re.sub(r"cos(?=[\u0370-\u03ff])", r"\\cos", value)
+    value = re.sub(r"cos(?=[A-Za-z])", r"\\cos ", value)
+    indexed_greek = {"α", "β", "γ", "δ", "ε", "θ", "μ", "ρ", "σ", "φ", "ω"}
+    for symbol, latex in _INLINE_GREEK.items():
+        if symbol in indexed_greek:
+            value = re.sub(
+                re.escape(symbol) + r"([A-Za-z0-9])",
+                lambda match, command=latex: rf"{command}_{{{match.group(1)}}}",
+                value,
+            )
+        value = value.replace(symbol, latex)
+    value = re.sub(r"\s*=\s*", " = ", value)
+    unit_match = re.search(
+        r"\s*(m\s*(?:/\s*s(?:\^?2)?|[●·⋅]\s*s\s*(?:-?\s*2))|"
+        r"nm|cm|mm|mA|kV|mV|Hz)\s*$",
+        value,
+    )
+    if unit_match:
+        unit = re.sub(r"\s+", "", unit_match.group(1))
+        if re.search(r"[●·⋅]", unit):
+            rendered_unit = r"\,\mathrm{m}\cdot\mathrm{s}^{-2}"
+        else:
+            unit = re.sub(r"s2$", "s^2", unit)
+            rendered_unit = rf"\,\mathrm{{{unit}}}"
+        value = value[:unit_match.start()] + rendered_unit
+    return re.sub(r"\s{2,}", " ", value).strip()
+
+
+def format_inline_formulas(text: str) -> tuple[str, int]:
+    """Wrap conservative native-text equalities in inline LaTeX delimiters."""
+    raw = str(text)
+    if raw.count("=") >= 2 and re.search(r"[\u0394\u2211]", raw):
+        return raw, 0
+    count = 0
+
+    def replace(match: re.Match) -> str:
+        nonlocal count
+        count += 1
+        return f"${_inline_formula_latex(match.group(1))}$"
+
+    return _INLINE_EQUALITY.sub(replace, raw), count
 
 
 def has_ink(page, rect, dpi: int = 72, ratio: float = 0.001) -> bool:

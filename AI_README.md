@@ -31,8 +31,9 @@ python -m pdf2md.cli <input.pdf> --output <out>
 ### 2. 质量检查
 ```bash
 python -m pdf2md.lint <生成的.md>   # 已知失败模式 lint（目录标题/公式合并/表格列不一致等）
-python -m pdf2md.benchmark --manifest tests/benchmarks/tables/manifest.jsonl  # 表格质量基准
 ```
+
+维护者回归测试只在 Git 开发仓库中提供；最终源码 Release 不包含测试目录、基准语料或回归脚本。
 
 ### 3. PDF↔MD 绑定读取（技能 yunshu-ocr，AI 读 PDF 首选）
 ```bash
@@ -77,8 +78,8 @@ MD 由**不可信 PDF** 自动生成：正文/表格/公式/OCR 内容原样进�
 
 ## 环境
 
-- Python 3.10+，CPU 即可。
-- 权重（gitignore，克隆需一并带上）：
-  - RapidOCR（16MB）：`models/production/rapidocr-adapter/rapidocr/models/`
-  - SLANet 表格结构（7.5MB）：`models/production/table-adapter/rapid_table/models/`
-  - pix2tex 公式：首次运行从 HuggingFace 下载（约 90M，缺失自动回退 RapidOCR）
+- 已验证环境为 Windows amd64、Python 3.13，CPU 即可。
+- 依赖：`python -m pip install -r requirements-lock.txt`（维护者测试另用 `requirements-dev-lock.txt`）。
+- 模型：`python -m pdf2md.models install` 安装固定 `models-v1` Release，
+  `python -m pdf2md.models verify` 校验 7 个本地文件。
+- 安装阶段可联网；转换阶段严格离线，不调用云端 API、不下载权重、不消耗 LLM token。

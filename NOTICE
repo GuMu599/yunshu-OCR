@@ -1,0 +1,38 @@
+yunshu-OCR
+Copyright (C) 2026 GuMu
+
+Except for the third-party components identified below and in
+docs/VENDORED.md, the original source code in this repository is licensed
+under the GNU Affero General Public License, version 3 only (AGPL-3.0-only).
+See LICENSE for the complete terms.
+
+Third-party components retain their own copyright notices and licenses. The
+repository license does not replace or relicense those components.
+
+Vendored components currently include:
+
+- RapidOCR and related PaddleOCR-derived code under the Apache License 2.0.
+- RapidTable and related PaddleOCR-derived code under the Apache License 2.0.
+
+The separately distributed models-v1 Release asset contains:
+
+- DocLayout-YOLO DocStructBench 1280 weights under AGPL-3.0-only.
+- pix2tex / LaTeX-OCR weights and image-resizer weights from Release v0.0.1
+  under CC-BY-NC-SA-4.0. The pix2tex source code is MIT, but that license does
+  not replace the separate non-commercial weights license.
+- PaddleOCR-derived RapidOCR and RapidTable ONNX weights, identified upstream
+  as Apache-2.0.
+
+Exact filenames, versions, sizes, hashes, and provenance notes are recorded in
+models/models.lock.json and docs/VENDORED.md. Model assets are not relicensed
+by this repository. Their provenance and redistribution terms must be reviewed
+before a public Release is created or replaced.
+
+The models-v1 archive bundles the model attribution notice and the applicable
+AGPL-3.0, CC-BY-NC-SA-4.0, and Apache-2.0 license texts. Its pix2tex weights
+remain limited to non-commercial use.
+
+The relevant texts and model attribution are included under
+THIRD_PARTY_LICENSES/. Additional runtime dependencies and model assets are
+documented in README.md and docs/VENDORED.md and remain subject to their
+respective licenses and terms.

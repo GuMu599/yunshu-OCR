@@ -19,6 +19,7 @@ from .utils.load_image import LoadImage
 from .utils.log import logger
 from .utils.output import RapidOCROutput
 from .utils.parse_parameters import ParseParams
+from .utils.vis_res import VisRes
 from .utils.process_img import (
     apply_vertical_padding,
     get_rotate_crop_image,
@@ -26,7 +27,6 @@ from .utils.process_img import (
     resize_image_within_bounds,
 )
 from .utils.typings import LangRec
-from .utils.vis_res import VisRes
 
 root_dir = Path(__file__).resolve().parent
 DEFAULT_CFG_PATH = root_dir / "config.yaml"
@@ -215,11 +215,7 @@ class RapidOCR:
             scores=rec_res.scores,
             word_results=rec_res.word_results,
             elapse_list=[det_res.elapse, cls_res.elapse, rec_res.elapse],
-            viser=VisRes(
-                text_score=self.cfg.Global.text_score,
-                lang_type=self.cfg.Rec.lang_type,
-                font_path=self.cfg.Global.font_path,
-            ),
+            viser=None,
         )
 
         ocr_res = self.filter_by_text_score(ocr_res)

@@ -4,9 +4,9 @@
 # PDF 处理
 PyMuPDF>=1.23.0
 numpy>=2.0.0
-Pillow>=10.0.0
+Pillow>=12.3.0,<13
 
-# 版面检测 (doclayout_yolo, 权重已在本地缓存)
+# 版面检测（权重由 python -m pdf2md.models install 安装）
 doclayout_yolo>=0.0.2b1
 
 # RapidOCR (onnxruntime CPU, vendored 适配器在 models/production/rapidocr-adapter)
@@ -18,7 +18,7 @@ shapely>=2.0.0
 colorlog>=6.7.0
 requests>=2.28.0
 tqdm>=4.66.0
+psutil>=5.9.0
 
-# 公式识别模型 (图像→LaTeX). 权重首次运行从 HuggingFace 下载 (约 90M)
-# 缺失时自动回退 RapidOCR + 符号映射
+# 公式识别模型（图像→LaTeX）；转换时只读取经清单校验的本地权重
 pix2tex>=0.1.4
