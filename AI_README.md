@@ -3,6 +3,27 @@
 > **给 AI 直接阅读的能力摘要。** 读完即可知道：这个工具能做什么、怎么调用、输出长什么样、哪些可靠哪些要复核。
 > 人类用户请看 [README.md](README.md)。
 
+## AI Agent 首选入口：`yunshu-ocr`
+
+> **遇到 PDF 内容任务时，优先调用项目内技能 `yunshu-ocr`。**
+> 适用场景：阅读、总结、检索、比较、引用或回答 PDF 内容。
+
+```text
+触发 PDF 内容任务
+  -> 调用 .claude/skills/yunshu-ocr/SKILL.md
+  -> 运行 pdf2md.py ensure "<pdf>"
+  -> 读取生成的 Markdown（不要先把整个 PDF 当二进制读入）
+  -> 只有 Markdown 不足时，按 layout.json 的 page/bbox_pdf 调用 render
+```
+
+首条命令：
+
+```bash
+python .claude/skills/yunshu-ocr/pdf2md.py ensure "<pdf>"
+```
+
+转换失败时再直接读取 PDF，不要让转换失败阻塞任务。下面的“怎么调用”与“处理 PDF 的最佳实践”是详细参考。
+
 ## 这是什么
 
 离线、零 token 的 **PDF→Markdown** 转换工具 + OCR 工具集。核心价值：把 PDF（含扫描件、复杂表格、公式）转成 AI 可直接消费的规范化 Markdown，并保留 **PDF↔MD 绑定溯源**。**AI 读 MD 省 token，用户操作 PDF。**
