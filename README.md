@@ -2,6 +2,12 @@
 
 独立、离线、零 token 的 PDF OCR 与 PDF→Markdown 工具集。
 
+## AI Agent 入口：优先使用 `yunshu-ocr`
+
+> **当任务涉及阅读、总结、检索、比较、引用或回答 PDF 内容时，请先阅读 [`AI_README.md`](AI_README.md)，并调用项目技能 [`yunshu-ocr`](.claude/skills/yunshu-ocr/SKILL.md)。**
+>
+> 首选流程：`ensure` PDF → 读取生成的 Markdown → 只有内容不足时再按 `layout.json` 坐标局部 `render`。转换失败才直接读取 PDF。
+
 ## 我们解决的用户痛点
 
 | 痛点 | 我们的解法 |
@@ -11,8 +17,6 @@
 | **公式难恢复**：扫描件公式、LaTeX 排版文字层损坏 | pix2tex 优先，RapidOCR + 符号映射兜底 |
 | **隐私与成本**：在线 OCR/LLM 有泄露与费用顾虑 | **全链路离线、CPU 可跑、不消耗任何 LLM token** |
 | **溯源缺失**：转换结果无法对应回 PDF 原文位置 | `layout.json` 逐元素记录 `page` + `bbox_pdf`，可按需渲染定位 |
-
-> 💡 **给 AI 用**：想快速掌握本工具能力、让它直接消费，请看 [`AI_README.md`](AI_README.md)。
 
 本仓库由两个协同组件组成，均可单独使用：
 
