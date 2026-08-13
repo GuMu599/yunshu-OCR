@@ -222,6 +222,14 @@ python -m pdf2md.cli <input.pdf> --output <out>
 
 `<name>.md` 结构：顶部 `> 元数据块` → `## Page N` 分页 → 正文 / `` ```latex `` 公式代码块 / MD 表格 / `![figure](images/…)` / `<!-- header -->…<!-- /header -->` 页眉页脚标注保留。
 
+#### D. 真实效果预览
+
+下面这张图来自公开的 [Attention Is All You Need](https://arxiv.org/abs/1706.03762) arXiv PDF（论文首页明确允许在学术/新闻作品中、带署名转载表格与图片）。左侧是原始 PDF 的局部上下文，右侧是 `yunshu-OCR` 离线生成的 Markdown 上下文；三行分别展示图片、公式和表格。
+
+![Attention Is All You Need：原始 PDF 与 yunshu-OCR Markdown 对照](docs/assets/attention-is-all-you-need-preview.png)
+
+右侧现在按 Markdown 的阅读效果渲染了标题、段落、图片和表格；公式仍保留为实际输出中的 LaTeX 源码块，因为 `yunshu-OCR` 的公式契约就是交给下游 LaTeX 渲染器。图片相对路径、表格结构和 `layout.json` 中的 PDF 坐标仍来自同一轮转换。样例 PDF 不提交到仓库，来源、SHA-256 和重建命令见 [`docs/assets/attention-is-all-you-need-source.md`](docs/assets/attention-is-all-you-need-source.md)。
+
 #### C. 质量检查
 
 ```bash
