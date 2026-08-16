@@ -16,7 +16,7 @@
 这是一个**独立命令行工具**（命名 `pdf2md`），落在 `litwise-ocr` 目录下的子目录（已确认决策）：
 
 ```text
-E:\Codex\yunshu-OCR\pdf2md\
+<yunshu-OCR 项目目录>\pdf2md\
 ```
 
 与 `tools/`（OCR 修复）职责平行：`tools/` 管 OCR 修复，`pdf2md/` 管 PDF→Markdown 转换。

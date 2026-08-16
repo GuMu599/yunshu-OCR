@@ -55,7 +55,7 @@
 
 ```powershell
 powershell -File scripts/build_model_release.ps1 -Output tmp/pdf2md-models-v1.zip
-python -m pdf2md.models install --source-url file:///E:/Codex/yunshu-OCR/tmp/pdf2md-models-v1.zip
+python -m pdf2md.models install --source-url file:///absolute/path/to/pdf2md-models-v1.zip
 python -m pdf2md.models verify
 ```
 

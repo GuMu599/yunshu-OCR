@@ -1,6 +1,6 @@
-# PDF↔Markdown 绑定读取技能设计（yunshu-ocr）
+# PDF↔Markdown 绑定读取工具设计
 
-> 状态：已实现。技能定义见 `.claude/skills/yunshu-ocr/SKILL.md`，助手见同目录 `pdf2md.py`。
+> 状态：已实现。使用说明见 [`tools/pdf-reading/README.md`](../tools/pdf-reading/README.md)，辅助脚本为同目录 `pdf2md.py`。
 > 本文是设计溯源与后续演进基线。
 
 ## 目标
@@ -9,7 +9,7 @@
 
 ```
 用户: "看看这篇论文里表 1 的数据"        ← 用户操作对象是 PDF
-  │ 技能唤醒
+  │ 启动处理流程
   ▼
 AI:  ensure <pdf> (缓存复用) → 读 <name>.md        ← AI 阅读对象是 Markdown
   │  表 1 在 layout.json 有 page+bbox 溯源 → 直接回答
@@ -38,16 +38,16 @@ AI 据此回答"某内容在第几页/哪个区域"，并在需要时精确渲�
 ### 3. 按需渲染 PDF 局部
 
 ```bash
-python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" --dpi 300 --out /tmp/region.png
+python tools/pdf-reading/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" --dpi 300 --out /tmp/region.png
 ```
 
 - bbox 取自 layout.json；只渲染目标区域，不整页。
 - 仅当 MD 不足以回答时触发（降级表、公式不确定、覆盖率低）。
 
-## 技能结构
+## 工具结构
 
-- `.claude/skills/yunshu-ocr/SKILL.md`：触发条件（"Use when reading/extracting from a PDF"）+ 工作流 + 常见错误。
-- `.claude/skills/yunshu-ocr/pdf2md.py`：`ensure` / `info` / `render` 子命令，输出 JSON 供 AI 解析。
+- `tools/pdf-reading/README.md`：适用场景、工作流、安全边界和常见错误。
+- `tools/pdf-reading/pdf2md.py`：`ensure` / `info` / `render` 子命令，输出 JSON 供 AI 解析。
 
 ## 约束（写进技能）
 
@@ -61,7 +61,7 @@ python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" -
 
 | 组件 | 角色 |
 |---|---|
-| `python -m pdf2md.cli` | 转换引擎（技能助手底层调用） |
+| `python -m pdf2md.cli` | 转换引擎（阅读工具底层调用） |
 | `layout.json` | PDF↔MD 绑定（溯源） |
 | `report.json` | 统计/覆盖率（判断是否需按需渲染） |
 | `pdf2md/benchmark.py` | 转换质量基准（确保 MD 可靠） |
@@ -72,5 +72,5 @@ python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" -
 - **双向锚点**：MD 段落 ↔ PDF 页/bbox 的显式索引（现在是逐元素隐含绑定），支持"从 AI 回答一键跳到 PDF 位置"。
 - **多页/跨页表格绑定**：跨页合并后的表格溯源到起止页。
 - **增量缓存**：PDF 局部变更只重转受影响页。
-- **技能自检**：`info` 返回覆盖率，覆盖率异常时自动提示按需渲染。
-- **个人级技能**：若跨项目复用，可放到 `~/.claude/skills/`（当前在项目级）。
+- **工具自检**：`info` 返回覆盖率，覆盖率异常时自动提示按需渲染。
+- **跨项目复用**：可复制 `tools/pdf-reading/`，并保持相对于仓库根目录的目录层级。

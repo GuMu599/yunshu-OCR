@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""yunshu-ocr 技能助手: 确保 PDF→MD 转换缓存 + 按需渲染 PDF 局部.
+"""PDF 阅读助手：确保 PDF→MD 转换缓存，并按需渲染 PDF 局部。
 
-用法 (repo 根目录下运行, 或用任意 python 解释器):
-  python .claude/skills/yunshu-ocr/pdf2md.py ensure <pdf> [--force]
-  python .claude/skills/yunshu-ocr/pdf2md.py render <pdf> <page> <bbox> [--dpi 300] [--out out.png]
-  python .claude/skills/yunshu-ocr/pdf2md.py info <pdf>
+用法（在仓库根目录下运行，或使用任意 Python 解释器）：
+  python tools/pdf-reading/pdf2md.py ensure <pdf> [--force]
+  python tools/pdf-reading/pdf2md.py render <pdf> <page> <bbox> [--dpi 300] [--out out.png]
+  python tools/pdf-reading/pdf2md.py info <pdf>
 
-输出均为 JSON, 供 AI 解析。bbox 格式: "x0,y0,x1,y1" 或 "full"。
+输出均为 JSON，供程序解析。bbox 格式："x0,y0,x1,y1" 或 "full"。
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent.parent.parent.parent  # .claude/skills/<name>/ → repo 根
+_REPO = Path(__file__).resolve().parent.parent.parent  # tools/pdf-reading/ → repo 根
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
@@ -117,7 +116,7 @@ def cmd_info(pdf: str) -> dict:
             info["stats"] = r.get("stats", {})
             info["pages"] = r.get("pages")
             info["coverage"] = r.get("coverage")
-            info["pdf_profile"] = r.get("pdf_profile")  # 模式/瓶颈/建议
+            info["pdf_profile"] = r.get("pdf_profile")
         except Exception:
             pass
     print(json.dumps(info, ensure_ascii=False))

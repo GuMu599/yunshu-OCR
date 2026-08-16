@@ -3,14 +3,14 @@
 > **给 AI 直接阅读的能力摘要。** 读完即可知道：这个工具能做什么、怎么调用、输出长什么样、哪些可靠哪些要复核。
 > 人类用户请看 [README.md](README.md)。
 
-## AI Agent 首选入口：`yunshu-ocr`
+## PDF 内容处理首选入口
 
-> **遇到 PDF 内容任务时，优先调用项目内技能 `yunshu-ocr`。**
+> **遇到 PDF 内容任务时，优先使用项目内 PDF 阅读工具。**
 > 适用场景：阅读、总结、检索、比较、引用或回答 PDF 内容。
 
 ```text
 触发 PDF 内容任务
-  -> 调用 .claude/skills/yunshu-ocr/SKILL.md
+  -> 阅读 tools/pdf-reading/README.md
   -> 运行 pdf2md.py ensure "<pdf>"
   -> 读取生成的 Markdown（不要先把整个 PDF 当二进制读入）
   -> 只有 Markdown 不足时，按 layout.json 的 page/bbox_pdf 调用 render
@@ -19,7 +19,7 @@
 首条命令：
 
 ```bash
-python .claude/skills/yunshu-ocr/pdf2md.py ensure "<pdf>"
+python tools/pdf-reading/pdf2md.py ensure "<pdf>"
 ```
 
 转换失败时再直接读取 PDF，不要让转换失败阻塞任务。下面的“怎么调用”与“处理 PDF 的最佳实践”是详细参考。
@@ -56,11 +56,11 @@ python -m pdf2md.lint <生成的.md>   # 已知失败模式 lint（目录标题/
 
 维护者回归测试只在 Git 开发仓库中提供；最终源码 Release 不包含测试目录、基准语料或回归脚本。
 
-### 3. PDF↔MD 绑定读取（技能 yunshu-ocr，AI 读 PDF 首选）
+### 3. PDF↔MD 绑定读取（AI 读 PDF 首选）
 ```bash
-python .claude/skills/yunshu-ocr/pdf2md.py ensure "<pdf>"    # 缓存转换，输出 md/layout/report 路径
-python .claude/skills/yunshu-ocr/pdf2md.py info "<pdf>"      # 转换状态/统计/覆盖率/预检(mode+瓶颈)
-python .claude/skills/yunshu-ocr/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" [--dpi 300]  # 按需渲染局部
+python tools/pdf-reading/pdf2md.py ensure "<pdf>"    # 缓存转换，输出 md/layout/report 路径
+python tools/pdf-reading/pdf2md.py info "<pdf>"      # 转换状态/统计/覆盖率/预检(mode+瓶颈)
+python tools/pdf-reading/pdf2md.py render "<pdf>" <page> "x0,y0,x1,y1" [--dpi 300]  # 按需渲染局部
 ```
 
 ## 输出契约

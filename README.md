@@ -2,9 +2,9 @@
 
 独立、离线、零 token 的 PDF OCR 与 PDF→Markdown 工具集。
 
-## AI Agent 入口：优先使用 `yunshu-ocr`
+## PDF 内容处理入口
 
-> **当任务涉及阅读、总结、检索、比较、引用或回答 PDF 内容时，请先阅读 [`AI_README.md`](AI_README.md)，并调用项目技能 [`yunshu-ocr`](.claude/skills/yunshu-ocr/SKILL.md)。**
+> **当任务涉及阅读、总结、检索、比较、引用或回答 PDF 内容时，请先阅读 [`AI_README.md`](AI_README.md)，再按 [`tools/pdf-reading/README.md`](tools/pdf-reading/README.md) 的流程处理。**
 >
 > 首选流程：`ensure` PDF → 读取生成的 Markdown → 只有内容不足时再按 `layout.json` 坐标局部 `render`。转换失败才直接读取 PDF。
 
@@ -67,15 +67,14 @@ yunshu-OCR/
 ├── requirements-dev-lock.txt     # 维护者测试依赖锁定（仅 Git 仓库）
 ├── .gitignore                    # 排除 __pycache__、模型权重、测试数据
 │
-├── .claude/skills/yunshu-ocr/    # ◀ PDF↔Markdown 绑定读取技能
-│   ├── SKILL.md                  #   技能定义（触发 + 工作流）
-│   └── pdf2md.py                 #   助手（ensure/info/render，输出 JSON）
-│
 ├── tools/                        # ◀ 组件一：OCR 工具集
 │   ├── ocr_worker.py             #   子进程 OCR worker（RSS/超时监控）
 │   ├── ocr_contracts.py          #   序列化契约（请求/候选/结果）
 │   ├── page_diagnostics.py       #   页面信号提取与状态诊断
 │   └── resource_limits.py        #   内存/DPI/批量页资源策略
+│   └── pdf-reading/              #   PDF↔Markdown 绑定读取工具
+│       ├── README.md              #   使用流程与安全边界
+│       └── pdf2md.py             #   ensure/info/render，输出 JSON
 │
 ├── models/models.lock.json       # 固定 Release、文件大小与 SHA-256
 ├── models/production/
@@ -109,7 +108,7 @@ yunshu-OCR/
     ├── OCR流程完整说明.md           # OCR 流程、置信度门禁、排错
     ├── PDF转Markdown零token工具实现计划.md  # pdf2md 设计决策
     ├── 表格识别强化方案.md           # 表格识别架构与实测
-    ├── PDF与Markdown绑定读取技能设计.md    # yunshu-ocr 技能设计
+    ├── PDF与Markdown绑定读取技能设计.md    # PDF↔Markdown 绑定读取工具设计
     └── VENDORED.md                 # vendored 供应链记录
 ```
 
@@ -126,7 +125,7 @@ yunshu-OCR/
 ## 安装
 
 ```powershell
-cd E:\Codex\yunshu-OCR
+cd <yunshu-OCR 项目目录>
 
 # 安装已经固定版本的 Windows / Python 3.13 运行时依赖闭包
 python -m pip install -r requirements-lock.txt
@@ -260,8 +259,8 @@ python -m pytest pdf2md/tests/
 - [`docs/OCR流程完整说明.md`](docs/OCR流程完整说明.md) — OCR 工具集完整流程、置信度门禁与排错
 - [`docs/PDF转Markdown零token工具实现计划.md`](docs/PDF转Markdown零token工具实现计划.md) — pdf2md 设计决策与输出契约
 - [`docs/表格识别强化方案.md`](docs/表格识别强化方案.md) — 表格识别架构与实测
-- [`docs/PDF与Markdown绑定读取技能设计.md`](docs/PDF与Markdown绑定读取技能设计.md) — yunshu-ocr 技能设计
-- `.claude/skills/yunshu-ocr/` — **PDF→Markdown 绑定读取技能**（AI 读 MD、用户操作 PDF）
+- [`docs/PDF与Markdown绑定读取技能设计.md`](docs/PDF与Markdown绑定读取技能设计.md) — PDF↔Markdown 绑定读取工具设计
+- [`tools/pdf-reading/`](tools/pdf-reading/) — **PDF→Markdown 绑定读取工具**（AI 读 MD、用户操作 PDF）
 - [`docs/VENDORED.md`](docs/VENDORED.md) — vendored 第三方代码/权重供应链记录（来源/版本/许可/哈希）
 
 ---

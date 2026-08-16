@@ -19,7 +19,7 @@
 ## 用法
 
 ```powershell
-cd E:\Codex\yunshu-OCR
+cd <yunshu-OCR 项目目录>
 python -m pip install -r requirements-lock.txt
 python -m pdf2md.models install
 python -m pdf2md.models verify
