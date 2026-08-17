@@ -99,7 +99,7 @@ def test_workbuddy_metadata_explains_the_zero_token_scope_without_overclaiming()
     assert "不消耗 LLM Token" in manifest
 
 
-def test_workbuddy_packager_creates_uploadable_repository_bound_zip(tmp_path):
+def test_workbuddy_packager_creates_portable_upload_zip(tmp_path):
     installer = _load_installer()
     artifact = installer.package_workbuddy(tmp_path / "yunshu-ocr-workbuddy.zip")
 
@@ -108,12 +108,18 @@ def test_workbuddy_packager_creates_uploadable_repository_bound_zip(tmp_path):
         assert set(archive.namelist()) == {
             "SKILL.md",
             "manifest.yaml",
-            "references/yunshu-ocr-root.txt",
             "scripts/yunshu_pdf.py",
         }
-        assert all(not Path(name).name.startswith(".") for name in archive.namelist())
-        recorded = archive.read("references/yunshu-ocr-root.txt").decode("utf-8")
-        assert Path(recorded).resolve() == ROOT.resolve()
+        assert all(
+            not any(part.startswith(".") for part in Path(name).parts)
+            for name in archive.namelist()
+        )
+        decoded_text = "\n".join(
+            archive.read(name).decode("utf-8") for name in archive.namelist()
+        )
+        assert str(ROOT.resolve()) not in decoded_text
+        assert r"E:\Codex" not in decoded_text
+        assert r"C:\Users\GuMu" not in decoded_text
 
 
 def test_workbuddy_packager_refuses_to_overwrite_without_force(tmp_path):

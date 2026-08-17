@@ -66,7 +66,6 @@ def package_workbuddy(
             SKILLS / "shared" / "yunshu_pdf.py",
             "scripts/yunshu_pdf.py",
         )
-        archive.writestr("references/yunshu-ocr-root.txt", str(ROOT.resolve()))
     return target
 
 
@@ -83,7 +82,6 @@ def main() -> int:
                 "ok": True,
                 "variant": args.variant,
                 "artifact": str(artifact),
-                "repository": str(ROOT.resolve()),
                 "hint": (
                     "in WorkBuddy open Experts, Skills and Connectors > Add Skill > "
                     "Upload Skill, then select this ZIP"
