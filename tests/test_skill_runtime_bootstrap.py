@@ -232,6 +232,22 @@ def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
     launcher = _load_launcher()
     paths = launcher._runtime_paths(tmp_path)
     _make_repo(paths.runtime)
+    manifest = paths.runtime / "models" / "models.lock.json"
+    model = paths.runtime / "models" / "runtime" / "model.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"abc")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"install_path": "models/runtime/model.bin", "size": 3}
+                ],
+                "release_files": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     paths.python.parent.mkdir(parents=True)
     paths.python.write_text("python", encoding="utf-8")
     paths.state.parent.mkdir(parents=True)
@@ -260,6 +276,43 @@ def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
 
     assert selected.repo == paths.runtime
     assert selected.python == paths.python
+
+
+def test_state_is_invalid_when_a_declared_model_is_missing(tmp_path):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    _make_repo(paths.runtime)
+    manifest = paths.runtime / "models" / "models.lock.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"install_path": "models/runtime/missing.bin", "size": 3}
+                ],
+                "release_files": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.python.parent.mkdir(parents=True)
+    paths.python.write_text("python", encoding="utf-8")
+    paths.state.parent.mkdir(parents=True)
+    paths.state.write_text(
+        json.dumps(
+            {
+                "runtime_version": launcher.RUNTIME_VERSION,
+                "runtime_sha256": launcher.RUNTIME_SHA256,
+                "model_sha256": launcher.MODEL_SHA256,
+                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "dependency_mode": launcher._dependency_mode(),
+                "models_verified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert launcher._state_valid(paths) is False
 
 
 def test_failed_install_does_not_publish_completion_state(monkeypatch, tmp_path):

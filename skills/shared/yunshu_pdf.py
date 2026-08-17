@@ -331,8 +331,41 @@ def _extract_runtime(archive_path: Path, destination: Path) -> None:
         raise BootstrapError("archive_unsafe", "extract", str(exc)) from exc
 
 
+def _models_present(repo: Path) -> bool:
+    manifest = repo / "models" / "models.lock.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        models = payload["models"]
+        release_files = payload["release_files"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(models, list) or not isinstance(release_files, list):
+        return False
+    declared = [*models, *release_files]
+    if not declared:
+        return False
+    for item in declared:
+        try:
+            raw_path = str(item["install_path"])
+            expected_size = int(item["size"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        relative = PurePosixPath(raw_path.replace("\\", "/"))
+        if relative.is_absolute() or PureWindowsPath(raw_path).drive or ".." in relative.parts:
+            return False
+        target = repo / Path(*relative.parts)
+        if not target.is_file() or target.stat().st_size != expected_size:
+            return False
+    return True
+
+
 def _state_valid(paths: RuntimePaths) -> bool:
-    if not (_is_repo(paths.runtime) and paths.python.is_file() and paths.state.is_file()):
+    if not (
+        _is_repo(paths.runtime)
+        and _models_present(paths.runtime)
+        and paths.python.is_file()
+        and paths.state.is_file()
+    ):
         return False
     try:
         state = json.loads(paths.state.read_text(encoding="utf-8"))
