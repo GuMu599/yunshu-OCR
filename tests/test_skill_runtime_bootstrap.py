@@ -499,7 +499,7 @@ def test_interruption_after_runtime_publish_recovers_staged_venv_offline(
     paths = launcher._runtime_paths(tmp_path)
     _make_repo(paths.runtime)
     _write_model_inventory(launcher, paths.runtime)
-    stage = tmp_path / ".bootstrap-interrupted"
+    stage = tmp_path / f"{paths.stage_prefix}interrupted"
     staged_python = stage / "venv" / paths.python.relative_to(paths.venv)
     staged_python.parent.mkdir(parents=True)
     staged_python.write_text("python", encoding="utf-8")
@@ -522,7 +522,7 @@ def test_interruption_after_venv_publish_reconstructs_state_offline(
     launcher = _load_launcher()
     paths = launcher._runtime_paths(tmp_path)
     _prepare_complete_runtime(launcher, paths)
-    stage = tmp_path / ".bootstrap-interrupted"
+    stage = tmp_path / f"{paths.stage_prefix}interrupted"
     stage.mkdir()
     launcher._write_publish_journal(paths, stage)
     monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
@@ -654,16 +654,20 @@ def test_releasing_an_old_handle_never_deletes_replacement_lock_content(tmp_path
     assert lock.read_text(encoding="utf-8") == "replacement"
 
 
-def test_cleanup_staging_removes_only_bootstrap_directories(tmp_path):
+def test_cleanup_staging_removes_only_current_python_stages(tmp_path):
     launcher = _load_launcher()
-    stale = tmp_path / ".bootstrap-stale"
+    paths = launcher._runtime_paths(tmp_path)
+    stale = tmp_path / f"{paths.stage_prefix}stale"
+    other_python = tmp_path / ".bootstrap-py999-stale"
     keep = tmp_path / "runtime"
     stale.mkdir()
+    other_python.mkdir()
     keep.mkdir()
 
-    launcher._cleanup_staging(tmp_path)
+    launcher._cleanup_staging(paths)
 
     assert not stale.exists()
+    assert other_python.exists()
     assert keep.exists()
 
 

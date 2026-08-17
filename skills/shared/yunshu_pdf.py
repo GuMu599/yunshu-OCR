@@ -93,6 +93,7 @@ class RuntimePaths:
     log: Path
     lock: Path
     journal: Path
+    stage_prefix: str
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ def _runtime_paths(root: Path) -> RuntimePaths:
         log=root / "logs" / f"bootstrap-{RUNTIME_VERSION}-{python_tag}.log",
         lock=root / "state" / f"{RUNTIME_VERSION}.install.lock",
         journal=root / "state" / f"{RUNTIME_VERSION}-{python_tag}.publishing.json",
+        stage_prefix=f".bootstrap-{python_tag}-",
     )
 
 
@@ -598,8 +600,8 @@ def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> InstallL
         raise
 
 
-def _cleanup_staging(root: Path) -> None:
-    for candidate in root.glob(".bootstrap-*"):
+def _cleanup_staging(paths: RuntimePaths) -> None:
+    for candidate in paths.root.glob(f"{paths.stage_prefix}*"):
         if candidate.is_dir():
             shutil.rmtree(candidate, ignore_errors=True)
 
@@ -608,7 +610,7 @@ def _write_publish_journal(paths: RuntimePaths, stage: Path) -> None:
     resolved_stage = stage.resolve()
     if (
         resolved_stage.parent != paths.root.resolve()
-        or not resolved_stage.name.startswith(".bootstrap-")
+        or not resolved_stage.name.startswith(paths.stage_prefix)
     ):
         raise BootstrapError(
             "runtime_invalid",
@@ -653,7 +655,7 @@ def _read_publish_journal(paths: RuntimePaths) -> Path | None:
     if not all(payload.get(key) == value for key, value in expected.items()):
         return None
     stage_name = payload.get("stage")
-    if not isinstance(stage_name, str) or not stage_name.startswith(".bootstrap-"):
+    if not isinstance(stage_name, str) or not stage_name.startswith(paths.stage_prefix):
         return None
     stage = (paths.root / stage_name).resolve()
     return stage if stage.parent == paths.root.resolve() else None
@@ -734,7 +736,7 @@ def _reconstruct_state(paths: RuntimePaths) -> bool:
 
 
 def _install_runtime(paths: RuntimePaths) -> None:
-    stage_parent = Path(tempfile.mkdtemp(prefix=".bootstrap-", dir=paths.root))
+    stage_parent = Path(tempfile.mkdtemp(prefix=paths.stage_prefix, dir=paths.root))
     stage_runtime = stage_parent / "runtime"
     stage_venv = stage_parent / "venv"
     try:
@@ -860,7 +862,7 @@ def _ensure_managed_runtime() -> RuntimeSelection:
             if _recover_interrupted_publish(paths) or _reconstruct_state(paths):
                 return RuntimeSelection(paths.runtime, paths.python, paths.log)
             paths.journal.unlink(missing_ok=True)
-            _cleanup_staging(paths.root)
+            _cleanup_staging(paths)
             if not _state_valid(paths):
                 paths.state.unlink(missing_ok=True)
                 shutil.rmtree(paths.runtime, ignore_errors=True)
