@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import sys
+import textwrap
 import zipfile
 from pathlib import Path
 
@@ -11,6 +12,20 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "skills" / "shared" / "yunshu_pdf.py"
+
+
+class _VersionInfo(tuple):
+    @property
+    def major(self):
+        return self[0]
+
+    @property
+    def minor(self):
+        return self[1]
+
+
+def _version(major, minor):
+    return _VersionInfo((major, minor, 0, "final", 0))
 
 
 def _load_launcher():
@@ -129,6 +144,44 @@ def test_cache_root_follows_platform_policy(system, env, home, expected):
     assert launcher._cache_root(system=system, env=env, home=Path(home)) == expected
 
 
+def test_runtime_paths_are_python_isolated_behind_one_cache_wide_lock(
+    monkeypatch, tmp_path
+):
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, "version_info", _version(3, 12))
+    py312 = launcher._runtime_paths(tmp_path)
+    monkeypatch.setattr(launcher.sys, "version_info", _version(3, 13))
+    py313 = launcher._runtime_paths(tmp_path)
+
+    assert py312.runtime != py313.runtime
+    assert py312.venv != py313.venv
+    assert py312.state != py313.state
+    assert py312.lock == py313.lock
+
+
+def test_python_version_cleanup_cannot_delete_another_runtime(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, "version_info", _version(3, 12))
+    py312 = launcher._runtime_paths(tmp_path)
+    py312.runtime.mkdir(parents=True)
+    sentinel = py312.runtime / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    py312.venv.mkdir(parents=True)
+    monkeypatch.setattr(launcher.sys, "version_info", _version(3, 13))
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+
+    def stop_after_cleanup(paths):
+        assert sentinel.is_file()
+        raise launcher.BootstrapError("stop", "test", "stop")
+
+    monkeypatch.setattr(launcher, "_install_runtime", stop_after_cleanup)
+
+    with pytest.raises(launcher.BootstrapError, match="stop"):
+        launcher._ensure_managed_runtime()
+
+    assert sentinel.is_file()
+
+
 def test_explicit_valid_override_wins(monkeypatch, tmp_path):
     launcher = _load_launcher()
     repo = _make_repo(tmp_path / "override")
@@ -161,6 +214,43 @@ def test_legacy_marker_remains_supported(monkeypatch, tmp_path):
     )
 
     assert launcher._find_existing_repo() == repo.resolve()
+
+
+@pytest.mark.parametrize("payload", [b"\xff\xfe", b"\x80not-utf8"])
+def test_invalid_legacy_marker_encoding_is_ignored(monkeypatch, tmp_path, payload):
+    launcher = _load_launcher()
+    skill = tmp_path / "skill"
+    marker = skill / "references" / "yunshu-ocr-root.txt"
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(payload)
+    monkeypatch.delenv("YUNSHU_OCR_ROOT", raising=False)
+    monkeypatch.setattr(
+        launcher, "_script_path", lambda: skill / "scripts/yunshu_pdf.py"
+    )
+
+    assert launcher._find_existing_repo() is None
+
+
+def test_unreadable_legacy_marker_is_ignored(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    skill = tmp_path / "skill"
+    marker = skill / ".yunshu-ocr-root"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("ignored", encoding="utf-8")
+    original_read_text = launcher.Path.read_text
+
+    def fail_marker_read(path, *args, **kwargs):
+        if path == marker:
+            raise OSError("marker denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.delenv("YUNSHU_OCR_ROOT", raising=False)
+    monkeypatch.setattr(
+        launcher, "_script_path", lambda: skill / "scripts/yunshu_pdf.py"
+    )
+    monkeypatch.setattr(launcher.Path, "read_text", fail_marker_read)
+
+    assert launcher._find_existing_repo() is None
 
 
 def test_release_constants_match_published_assets():
@@ -513,69 +603,55 @@ def test_failed_install_does_not_publish_completion_state(monkeypatch, tmp_path)
     assert not launcher._runtime_paths(tmp_path).state.exists()
 
 
-def test_stale_install_lock_is_reclaimed(monkeypatch, tmp_path):
+def test_install_lock_reports_contention_without_deleting_the_lock_path(tmp_path):
     launcher = _load_launcher()
     lock = tmp_path / "state" / "runtime.lock"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(json.dumps({"pid": 999999, "created": 1.0}), encoding="utf-8")
-    monkeypatch.setattr(launcher, "_pid_alive", lambda pid: False)
-
     ownership = launcher._acquire_lock(lock, timeout=0.1)
-
-    payload = json.loads(lock.read_text(encoding="utf-8"))
-    assert payload["pid"] == launcher.os.getpid()
-    assert payload["token"] == ownership.token
-
-
-def test_lock_release_does_not_remove_a_replacement_owner(tmp_path):
-    launcher = _load_launcher()
-    lock = tmp_path / "state/runtime.lock"
-    ownership = launcher._acquire_lock(lock, timeout=0.1)
-    replacement = {
-        "pid": launcher.os.getpid(),
-        "created": launcher.time.time(),
-        "token": "replacement-owner",
-    }
-    lock.write_text(json.dumps(replacement), encoding="utf-8")
-    launcher._release_lock(lock, ownership)
-    assert json.loads(lock.read_text(encoding="utf-8")) == replacement
-
-
-def test_stale_lock_reclaim_preserves_a_replacement_after_observation(tmp_path):
-    launcher = _load_launcher()
-    lock = tmp_path / "state/runtime.lock"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(
-        json.dumps({"pid": 999999, "created": 1.0, "token": "stale"}), encoding="utf-8"
-    )
-    observed = launcher._observe_lock(lock)
-    replacement = {
-        "pid": launcher.os.getpid(),
-        "created": launcher.time.time(),
-        "token": "replacement-owner",
-    }
-    lock.write_text(json.dumps(replacement), encoding="utf-8")
-    assert launcher._remove_lock_if_matches(lock, observed) is False
-    assert json.loads(lock.read_text(encoding="utf-8")) == replacement
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows process probe regression")
-def test_pid_probe_does_not_use_os_kill_on_windows(monkeypatch):
-    launcher = _load_launcher()
-    process = launcher.subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"]
-    )
     try:
-        monkeypatch.setattr(
-            launcher.os,
-            "kill",
-            lambda *args: pytest.fail("Windows liveness checks must not call os.kill"),
-        )
-        assert launcher._pid_alive(process.pid) is True
-        assert process.poll() is None
+        with pytest.raises(launcher.BootstrapError) as raised:
+            launcher._acquire_lock(lock, timeout=0.0)
+        assert raised.value.code == "install_busy"
+        assert lock.is_file()
     finally:
-        process.terminate()
-        process.wait(timeout=10)
+        launcher._release_lock(ownership)
+
+
+def test_install_lock_is_released_when_holder_process_exits(tmp_path):
+    launcher = _load_launcher()
+    lock = tmp_path / "state/runtime.lock"
+    code = textwrap.dedent(
+        """
+        import importlib.util, os, pathlib, sys
+        spec = importlib.util.spec_from_file_location("child_launcher", sys.argv[1])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        module._acquire_lock(pathlib.Path(sys.argv[2]), timeout=1.0)
+        os._exit(0)
+        """
+    )
+    completed = launcher.subprocess.run(
+        [sys.executable, "-c", code, str(LAUNCHER), str(lock)],
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+
+    ownership = launcher._acquire_lock(lock, timeout=0.5)
+    launcher._release_lock(ownership)
+    assert lock.is_file()
+
+
+def test_releasing_an_old_handle_never_deletes_replacement_lock_content(tmp_path):
+    launcher = _load_launcher()
+    lock = tmp_path / "state/runtime.lock"
+    ownership = launcher._acquire_lock(lock, timeout=0.1)
+    launcher._release_lock(ownership)
+    lock.write_text("replacement", encoding="utf-8")
+
+    launcher._release_lock(ownership)
+
+    assert lock.read_text(encoding="utf-8") == "replacement"
 
 
 def test_cleanup_staging_removes_only_bootstrap_directories(tmp_path):
@@ -643,6 +719,79 @@ def test_install_runtime_runs_dependency_and_model_verification(monkeypatch, tmp
         command[-2:] == ["--source-url", launcher.MODEL_URL] for command in commands
     )
     assert any(command[-2:] == ["pdf2md.models", "verify"] for command in commands)
+
+
+def test_real_runtime_publish_failure_preserves_staged_venv_for_offline_recovery(
+    monkeypatch, tmp_path
+):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+
+    def fake_download(url, destination, size, sha256):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"runtime")
+        return destination
+
+    def fake_extract(archive, destination):
+        _make_repo(destination)
+        (destination / "pdf2md").mkdir()
+        (destination / "pdf2md/__init__.py").write_text("", encoding="utf-8")
+        _write_model_inventory(launcher, destination)
+        (destination / "requirements.txt").write_text(
+            "requests>=2.28\n", encoding="utf-8"
+        )
+        (destination / "requirements-lock.txt").write_text(
+            "requests==2.34.2\n", encoding="utf-8"
+        )
+
+    class FakeBuilder:
+        def __init__(self, **kwargs):
+            pass
+
+        def create(self, destination):
+            python = Path(destination) / (
+                "Scripts/python.exe"
+                if launcher.platform.system() == "Windows"
+                else "bin/python"
+            )
+            python.parent.mkdir(parents=True)
+            python.write_text("python", encoding="utf-8")
+
+    monkeypatch.setattr(launcher, "_download_verified", fake_download)
+    monkeypatch.setattr(launcher, "_extract_runtime", fake_extract)
+    monkeypatch.setattr(launcher.venv, "EnvBuilder", FakeBuilder)
+    monkeypatch.setattr(launcher, "_run_logged", lambda *args, **kwargs: None)
+    original_replace = launcher.os.replace
+
+    def fail_venv_publish(source, destination):
+        if Path(source).name == "venv" and Path(destination) == paths.venv:
+            raise OSError("publish interrupted")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(launcher.os, "replace", fail_venv_publish)
+
+    with pytest.raises(launcher.BootstrapError) as raised:
+        launcher._install_runtime(paths)
+
+    assert raised.value.stage == "publish"
+    stage = launcher._read_publish_journal(paths)
+    assert stage is not None
+    staged_python = stage / "venv" / paths.python.relative_to(paths.venv)
+    assert paths.runtime.is_dir()
+    assert staged_python.is_file()
+
+    monkeypatch.setattr(launcher.os, "replace", original_replace)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        launcher,
+        "_install_runtime",
+        lambda *args, **kwargs: pytest.fail("recovery must remain offline"),
+    )
+
+    selected = launcher._ensure_managed_runtime()
+
+    assert selected.repo == paths.runtime
+    assert selected.python == paths.python
 
 
 def test_logged_subprocess_oserror_keeps_stage_and_log(monkeypatch, tmp_path):

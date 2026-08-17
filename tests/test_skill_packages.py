@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -61,7 +62,9 @@ def test_installer_copies_selected_skill_and_records_repository_root(tmp_path):
 
 def test_variant_descriptions_are_platform_specific():
     texts = {
-        variant: (ROOT / "skills" / variant / "yunshu-ocr" / "SKILL.md").read_text(encoding="utf-8")
+        variant: (ROOT / "skills" / variant / "yunshu-ocr" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
         for variant in VARIANTS
     }
     assert "Codex" in texts["codex"]
@@ -73,7 +76,9 @@ def test_variant_descriptions_are_platform_specific():
 def test_each_source_variant_is_directly_downloadable_with_its_launcher():
     shared = (ROOT / "skills" / "shared" / "yunshu_pdf.py").read_text(encoding="utf-8")
     for variant in VARIANTS:
-        launcher = ROOT / "skills" / variant / "yunshu-ocr" / "scripts" / "yunshu_pdf.py"
+        launcher = (
+            ROOT / "skills" / variant / "yunshu-ocr" / "scripts" / "yunshu_pdf.py"
+        )
         assert launcher.read_text(encoding="utf-8").rstrip("\n") == shared.rstrip("\n")
 
 
@@ -122,9 +127,14 @@ def test_workbuddy_packager_creates_portable_upload_zip(tmp_path):
         assert str(ROOT.resolve()) not in decoded_text
         assert r"E:\Codex" not in decoded_text
         assert r"C:\Users\GuMu" not in decoded_text
+        assert re.search(r"(?i)(?<![a-z0-9])[a-z]:[\\/]", decoded_text) is None
+        assert re.search(r"\\\\[^\\/\s]+\\[^\\/\s]+", decoded_text) is None
+        assert re.search(r"/(?:Users|home)/[^/\s]+", decoded_text) is None
 
 
-def test_workbuddy_cli_omits_repository_and_keeps_upload_hint(monkeypatch, tmp_path, capsys):
+def test_workbuddy_cli_omits_repository_and_keeps_upload_hint(
+    monkeypatch, tmp_path, capsys
+):
     installer = _load_installer()
     artifact = tmp_path / "yunshu-ocr-workbuddy.zip"
     monkeypatch.setattr(

@@ -14,12 +14,11 @@ import sys
 import tempfile
 import time
 import urllib.request
-import uuid
 import venv
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Mapping
+from typing import BinaryIO, Mapping
 
 
 RUNTIME_VERSION = "runtime-v1"
@@ -103,13 +102,10 @@ class RuntimeSelection:
     log: Path | None = None
 
 
-@dataclass(frozen=True)
-class LockOwnership:
-    token: str | None
-    pid: int | None
-    content: bytes
-    identity: tuple[int, int, int, int]
-    modified_ns: int
+@dataclass
+class InstallLock:
+    path: Path
+    handle: BinaryIO
 
 
 def _script_path() -> Path:
@@ -165,9 +161,11 @@ def _find_existing_repo() -> Path | None:
         skill_root / ".yunshu-ocr-root",
     ):
         if marker.is_file():
-            candidate = (
-                Path(marker.read_text(encoding="utf-8").strip()).expanduser().resolve()
-            )
+            try:
+                recorded = marker.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                continue
+            candidate = Path(recorded).expanduser().resolve()
             if _is_repo(candidate):
                 return candidate
     for parent in script.parents:
@@ -178,7 +176,7 @@ def _find_existing_repo() -> Path | None:
 
 def _runtime_paths(root: Path) -> RuntimePaths:
     python_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
-    runtime = root / "runtime" / RUNTIME_VERSION
+    runtime = root / "runtime" / f"{RUNTIME_VERSION}-{python_tag}"
     environment = root / "venv" / f"{RUNTIME_VERSION}-{python_tag}"
     python = environment / (
         "Scripts/python.exe" if platform.system() == "Windows" else "bin/python"
@@ -191,7 +189,7 @@ def _runtime_paths(root: Path) -> RuntimePaths:
         state=root / "state" / f"{RUNTIME_VERSION}-{python_tag}.json",
         archive=root / "downloads" / f"yunshu-ocr-{RUNTIME_VERSION}.zip",
         log=root / "logs" / f"bootstrap-{RUNTIME_VERSION}-{python_tag}.log",
-        lock=root / "state" / f"{RUNTIME_VERSION}-{python_tag}.lock",
+        lock=root / "state" / f"{RUNTIME_VERSION}.install.lock",
         journal=root / "state" / f"{RUNTIME_VERSION}-{python_tag}.publishing.json",
     )
 
@@ -536,106 +534,58 @@ def _run_logged(
         )
 
 
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if pid == os.getpid():
-        return True
+def _try_lock(handle: BinaryIO) -> bool:
+    handle.seek(0)
     if os.name == "nt":
-        import ctypes
+        import msvcrt
 
-        process_query_limited_information = 0x1000
-        error_access_denied = 5
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-        kernel32.CloseHandle.restype = ctypes.c_int
-        handle = kernel32.OpenProcess(
-            process_query_limited_information,
-            False,
-            pid,
-        )
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
-        return ctypes.get_last_error() == error_access_denied
-    try:
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def _observe_lock(path: Path) -> LockOwnership | None:
-    try:
-        with path.open("rb") as handle:
-            content = handle.read()
-            metadata = os.fstat(handle.fileno())
-    except OSError:
-        return None
-    token = None
-    pid = None
-    try:
-        payload = json.loads(content.decode("utf-8"))
-        raw_token = payload.get("token")
-        if isinstance(raw_token, str):
-            token = raw_token
-        pid = int(payload["pid"])
-    except (UnicodeDecodeError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-        pass
-    return LockOwnership(
-        token,
-        pid,
-        content,
-        (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns),
-        metadata.st_mtime_ns,
-    )
-
-
-def _remove_lock_if_matches(path: Path, observed: LockOwnership | None) -> bool:
-    if observed is None or _observe_lock(path) != observed:
-        return False
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return False
-    return True
-
-
-def _release_lock(path: Path, ownership: LockOwnership) -> None:
-    _remove_lock_if_matches(path, ownership)
-
-
-def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> LockOwnership:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + timeout
-    while True:
-        token = uuid.uuid4().hex
         try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(
-                        {"pid": os.getpid(), "created": time.time(), "token": token}
-                    )
-                )
-                handle.flush()
-                os.fsync(handle.fileno())
-            ownership = _observe_lock(path)
-            if ownership is not None and ownership.token == token:
-                return ownership
-        except FileExistsError:
-            observed = _observe_lock(path)
-            if observed is None:
-                continue
-            owner_alive = _pid_alive(observed.pid) if observed.pid is not None else None
-            invalid_age = time.time() - observed.modified_ns / 1_000_000_000
-            if owner_alive is False or (owner_alive is None and invalid_age >= 5.0):
-                if _remove_lock_if_matches(path, observed):
-                    continue
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _release_lock(ownership: InstallLock) -> None:
+    if ownership.handle.closed:
+        return
+    try:
+        _unlock(ownership.handle)
+    finally:
+        ownership.handle.close()
+
+
+def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> InstallLock:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"\0")
+        handle.flush()
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if _try_lock(handle):
+                return InstallLock(path=path, handle=handle)
             if time.monotonic() >= deadline:
                 raise BootstrapError(
                     "install_busy",
@@ -643,6 +593,9 @@ def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> LockOwne
                     f"runtime installation is still locked: {path}",
                 )
             time.sleep(0.25)
+    except Exception:
+        handle.close()
+        raise
 
 
 def _cleanup_staging(root: Path) -> None:
@@ -878,7 +831,8 @@ def _install_runtime(paths: RuntimePaths) -> None:
                 "runtime_invalid", "publish", str(exc), paths.log
             ) from exc
     finally:
-        shutil.rmtree(stage_parent, ignore_errors=True)
+        if not paths.journal.exists():
+            shutil.rmtree(stage_parent, ignore_errors=True)
 
 
 def _require_supported_python() -> None:
@@ -921,7 +875,7 @@ def _ensure_managed_runtime() -> RuntimeSelection:
                 )
             return RuntimeSelection(paths.runtime, paths.python, paths.log)
         finally:
-            _release_lock(paths.lock, ownership)
+            _release_lock(ownership)
     except BootstrapError:
         raise
     except OSError as exc:
