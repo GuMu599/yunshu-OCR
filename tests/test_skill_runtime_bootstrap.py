@@ -279,6 +279,32 @@ def test_failed_install_does_not_publish_completion_state(monkeypatch, tmp_path)
     assert not launcher._runtime_paths(tmp_path).state.exists()
 
 
+def test_stale_install_lock_is_reclaimed(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    lock = tmp_path / "state" / "runtime.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"pid": 999999, "created": 1.0}), encoding="utf-8")
+    monkeypatch.setattr(launcher, "_pid_alive", lambda pid: False)
+
+    launcher._acquire_lock(lock, timeout=0.1)
+
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    assert payload["pid"] == launcher.os.getpid()
+
+
+def test_cleanup_staging_removes_only_bootstrap_directories(tmp_path):
+    launcher = _load_launcher()
+    stale = tmp_path / ".bootstrap-stale"
+    keep = tmp_path / "runtime"
+    stale.mkdir()
+    keep.mkdir()
+
+    launcher._cleanup_staging(tmp_path)
+
+    assert not stale.exists()
+    assert keep.exists()
+
+
 def test_install_runtime_runs_dependency_and_model_verification(monkeypatch, tmp_path):
     launcher = _load_launcher()
     paths = launcher._runtime_paths(tmp_path)

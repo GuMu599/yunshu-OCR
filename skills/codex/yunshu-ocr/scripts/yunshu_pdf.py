@@ -375,6 +375,29 @@ def _run_logged(
         )
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _lock_owner_alive(path: Path) -> bool | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        pid = int(payload["pid"])
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+    return _pid_alive(pid)
+
+
 def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout
@@ -385,6 +408,11 @@ def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> None:
                 handle.write(json.dumps({"pid": os.getpid(), "created": time.time()}))
             return
         except FileExistsError:
+            owner_alive = _lock_owner_alive(path)
+            invalid_age = time.time() - path.stat().st_mtime if path.exists() else 0.0
+            if owner_alive is False or (owner_alive is None and invalid_age >= 5.0):
+                path.unlink(missing_ok=True)
+                continue
             if time.monotonic() >= deadline:
                 raise BootstrapError(
                     "install_busy",
@@ -392,6 +420,12 @@ def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> None:
                     f"runtime installation is still locked: {path}",
                 )
             time.sleep(0.25)
+
+
+def _cleanup_staging(root: Path) -> None:
+    for candidate in root.glob(".bootstrap-*"):
+        if candidate.is_dir():
+            shutil.rmtree(candidate, ignore_errors=True)
 
 
 def _write_state(paths: RuntimePaths) -> None:
@@ -506,6 +540,7 @@ def _ensure_managed_runtime() -> RuntimeSelection:
 
     _acquire_lock(paths.lock)
     try:
+        _cleanup_staging(paths.root)
         if not _state_valid(paths):
             paths.state.unlink(missing_ok=True)
             shutil.rmtree(paths.runtime, ignore_errors=True)
