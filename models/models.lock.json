@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "release": {
-    "repository": "cancelGuMu/yunshu-OCR",
+    "repository": "GuMu599/yunshu-OCR",
     "tag": "models-v1",
     "asset": "pdf2md-models-v1.zip",
-    "url": "https://github.com/cancelGuMu/yunshu-OCR/releases/download/models-v1/pdf2md-models-v1.zip",
+    "url": "https://github.com/GuMu599/yunshu-OCR/releases/download/models-v1/pdf2md-models-v1.zip",
     "size": 185346805,
     "sha256": "daa85d380551a93f0464950181c3bc29ab16525a55b3a6664108183aa49c9fb0",
     "unpacked_size": 185344721
