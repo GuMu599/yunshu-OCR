@@ -37,6 +37,7 @@
 
 - **适用宿主**：腾讯 WorkBuddy，以及通过 WorkBuddy Enterprise 后台分发 Skill 的环境。
 - **Skill 来源**：`skills/workbuddy/yunshu-ocr/`。
+- **直接下载**：[`yunshu-ocr-workbuddy.zip`](https://github.com/GuMu599/yunshu-OCR/releases/download/workbuddy-v1.1.0/yunshu-ocr-workbuddy.zip)。
 - **生成上传包**：`python skills/install.py workbuddy`。
 - **上传文件**：`dist/yunshu-ocr-workbuddy.zip`。
 - **安装方式**：在 WorkBuddy 打开“专家·技能·连接器 → 添加技能 → 上传技能”，选择 ZIP；

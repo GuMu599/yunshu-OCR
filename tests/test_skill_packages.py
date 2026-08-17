@@ -153,11 +153,16 @@ def test_workbuddy_packager_refuses_to_overwrite_without_force(tmp_path):
 
 
 def test_readmes_route_workbuddy_users_to_the_upload_package():
+    direct_download = (
+        "https://github.com/GuMu599/yunshu-OCR/releases/download/"
+        "workbuddy-v1.1.0/yunshu-ocr-workbuddy.zip"
+    )
     for filename in ("README.md", "AI_README.md"):
         text = (ROOT / filename).read_text(encoding="utf-8")
         assert "WorkBuddy" in text
         assert "python skills/install.py workbuddy" in text
         assert "yunshu-ocr-workbuddy.zip" in text
+        assert direct_download in text
 
 
 def test_readmes_describe_portable_first_use_and_offline_reuse():

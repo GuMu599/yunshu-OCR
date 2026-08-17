@@ -6,7 +6,8 @@
 
 按正在使用的 Agent 选择一个版本。四版能力相同，只是安装或上传方式和平台提示不同；
 不需要精度初始化，全部使用最高精度转换。Codex、Claude Code 和通用版可从本仓库安装；
-WorkBuddy 用户可直接下载并上传 `yunshu-ocr-workbuddy.zip`。
+WorkBuddy 用户可直接下载并上传
+[`yunshu-ocr-workbuddy.zip`](https://github.com/GuMu599/yunshu-OCR/releases/download/workbuddy-v1.1.0/yunshu-ocr-workbuddy.zip)。
 
 | 你使用的 Agent | 下载目录 | 安装命令 |
 |---|---|---|
@@ -19,7 +20,8 @@ Codex、Claude Code 和通用版安装器不会覆盖已有同名 Skill；如平
 可追加 `--dest "<你的技能目录>/yunshu-ocr"`。安装后新建一个 Agent 任务，让平台重新发现
 Skill。
 
-WorkBuddy 使用上传包：下载 Release 中的 `yunshu-ocr-workbuddy.zip`，或者在本仓库运行
+WorkBuddy 使用上传包：直接下载
+[`yunshu-ocr-workbuddy.zip`](https://github.com/GuMu599/yunshu-OCR/releases/download/workbuddy-v1.1.0/yunshu-ocr-workbuddy.zip)，或者在本仓库运行
 `python skills/install.py workbuddy` 生成 `dist/yunshu-ocr-workbuddy.zip`。随后在 WorkBuddy
 进入 **专家·技能·连接器 → 添加技能 → 上传技能**并选择该文件。上传包不包含生成机器的
 仓库绝对路径，可以复制到其他机器使用。个人上传以根目录 `SKILL.md` 为核心，包内同时
