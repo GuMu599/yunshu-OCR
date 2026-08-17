@@ -29,10 +29,45 @@ def _make_repo(path: Path) -> Path:
     return path
 
 
+def _write_model_inventory(launcher, repo: Path, payload: bytes = b"abc") -> Path:
+    model = repo / "models" / "runtime" / "model.bin"
+    model.parent.mkdir(parents=True, exist_ok=True)
+    model.write_bytes(payload)
+    manifest = repo / "models" / "models.lock.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "install_path": "models/runtime/model.bin",
+                        "size": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ],
+                "release_files": [],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    launcher.MODEL_MANIFEST_SHA256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    return model
+
+
+def _prepare_complete_runtime(launcher, paths) -> Path:
+    _make_repo(paths.runtime)
+    model = _write_model_inventory(launcher, paths.runtime)
+    paths.python.parent.mkdir(parents=True, exist_ok=True)
+    paths.python.write_text("python", encoding="utf-8")
+    return model
+
+
 def _runtime_zip(
     *,
     unsafe: str | None = None,
     extra_member: str | None = None,
+    extra_members: tuple[str, ...] = (),
 ) -> bytes:
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
@@ -47,6 +82,8 @@ def _runtime_zip(
             archive.writestr(f"{prefix}/models/models.lock.json", "{}")
             if extra_member is not None:
                 archive.writestr(f"{prefix}/{extra_member}", "unexpected")
+            for member in extra_members:
+                archive.writestr(f"{prefix}/{member}", "unexpected")
     return stream.getvalue()
 
 
@@ -70,6 +107,18 @@ def _runtime_zip(
             {"XDG_CACHE_HOME": "/var/tmp/cache"},
             "/home/test",
             Path("/var/tmp/cache/yunshu-ocr"),
+        ),
+        (
+            "Linux",
+            {"XDG_CACHE_HOME": ""},
+            "/home/test",
+            Path("/home/test/.cache/yunshu-ocr"),
+        ),
+        (
+            "Linux",
+            {"XDG_CACHE_HOME": "relative/cache"},
+            "/home/test",
+            Path("/home/test/.cache/yunshu-ocr"),
         ),
         ("Linux", {}, "/home/test", Path("/home/test/.cache/yunshu-ocr")),
     ],
@@ -133,6 +182,10 @@ def test_release_constants_match_published_assets():
     assert launcher.MODEL_SIZE == 185346805
     assert launcher.MODEL_SHA256 == (
         "daa85d380551a93f0464950181c3bc29ab16525a55b3a6664108183aa49c9fb0"
+    )
+    assert (
+        launcher.MODEL_MANIFEST_SHA256
+        == "6b5b93e645ab682546001000341cc91a3893fad68dd42732c21899c746b393a3"
     )
 
 
@@ -223,46 +276,66 @@ def test_safe_extract_rejects_undeclared_runtime_members(tmp_path):
     assert "undeclared" in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    "members",
+    [
+        ("models/production/model.bin", "models/production/model.bin"),
+        ("models/production/model.bin", "models/production/MODEL.bin"),
+    ],
+)
+def test_safe_extract_rejects_duplicate_or_case_colliding_members(tmp_path, members):
+    launcher = _load_launcher()
+    if members[0] == members[1]:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            payload = _runtime_zip(extra_members=members)
+    else:
+        payload = _runtime_zip(extra_members=members)
+    archive = tmp_path / "collision.zip"
+    archive.write_bytes(payload)
+    with pytest.raises(launcher.BootstrapError) as raised:
+        launcher._extract_runtime(archive, tmp_path / "runtime")
+    assert raised.value.code == "archive_unsafe"
+    assert "duplicate" in str(raised.value).lower()
+
+
 def test_dependency_file_uses_exact_lock_only_for_verified_platform(tmp_path):
     launcher = _load_launcher()
 
-    assert launcher._dependency_file(
-        tmp_path,
-        system="Windows",
-        machine="AMD64",
-        version=(3, 13),
-    ) == tmp_path / "requirements-lock.txt"
-    assert launcher._dependency_file(
-        tmp_path,
-        system="Darwin",
-        machine="arm64",
-        version=(3, 13),
-    ) == tmp_path / "requirements.txt"
-    assert launcher._dependency_file(
-        tmp_path,
-        system="Linux",
-        machine="x86_64",
-        version=(3, 12),
-    ) == tmp_path / "requirements.txt"
+    assert (
+        launcher._dependency_file(
+            tmp_path,
+            system="Windows",
+            machine="AMD64",
+            version=(3, 13),
+        )
+        == tmp_path / "requirements-lock.txt"
+    )
+    assert (
+        launcher._dependency_file(
+            tmp_path,
+            system="Darwin",
+            machine="arm64",
+            version=(3, 13),
+        )
+        == tmp_path / "requirements.txt"
+    )
 
 
-def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
+def test_models_present_rejects_a_fabricated_manifest(tmp_path):
     launcher = _load_launcher()
-    paths = launcher._runtime_paths(tmp_path)
-    _make_repo(paths.runtime)
-    manifest = paths.runtime / "models" / "models.lock.json"
-    model = paths.runtime / "models" / "runtime" / "model.bin"
+    repo = _make_repo(tmp_path / "runtime")
+    model = repo / "models/runtime/model.bin"
     model.parent.mkdir(parents=True)
-    model.write_bytes(b"abc")
-    manifest.parent.mkdir(parents=True, exist_ok=True)
+    model.write_bytes(b"fabricated")
+    manifest = repo / "models/models.lock.json"
     manifest.write_text(
         json.dumps(
             {
                 "models": [
                     {
                         "install_path": "models/runtime/model.bin",
-                        "size": 3,
-                        "sha256": hashlib.sha256(b"abc").hexdigest(),
+                        "size": model.stat().st_size,
+                        "sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
                     }
                 ],
                 "release_files": [],
@@ -270,23 +343,124 @@ def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    paths.python.parent.mkdir(parents=True)
-    paths.python.write_text("python", encoding="utf-8")
-    paths.state.parent.mkdir(parents=True)
-    paths.state.write_text(
-        json.dumps(
-            {
-                "runtime_version": launcher.RUNTIME_VERSION,
-                "runtime_sha256": launcher.RUNTIME_SHA256,
-                "model_sha256": launcher.MODEL_SHA256,
-                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-                "dependency_mode": launcher._dependency_mode(),
-                "models_verified": True,
-                "installed_at": 1.0,
-            }
-        ),
-        encoding="utf-8",
+    assert launcher._models_present(repo) is False
+
+
+def test_cached_state_does_not_rehash_unchanged_large_models(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    model = _prepare_complete_runtime(launcher, paths)
+    launcher._write_state(paths)
+    original = launcher._file_sha256
+
+    def guarded(path):
+        if path == model:
+            pytest.fail("unchanged cached model must not be rehashed")
+        return original(path)
+
+    monkeypatch.setattr(launcher, "_file_sha256", guarded)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+    assert launcher._ensure_managed_runtime() == launcher.RuntimeSelection(
+        paths.runtime, paths.python, paths.log
     )
+
+
+def test_changed_model_metadata_triggers_full_verification_and_state_refresh(
+    monkeypatch, tmp_path
+):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    model = _prepare_complete_runtime(launcher, paths)
+    launcher._write_state(paths)
+    before = json.loads(paths.state.read_text(encoding="utf-8"))[
+        "model_metadata_fingerprint"
+    ]
+    metadata = model.stat()
+    launcher.os.utime(
+        model, ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000)
+    )
+    original, hashed = launcher._file_sha256, []
+
+    def recording(path):
+        if path == model:
+            hashed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(launcher, "_file_sha256", recording)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        launcher,
+        "_download_verified",
+        lambda *a, **k: pytest.fail("verified cache must recover offline"),
+    )
+    selected = launcher._ensure_managed_runtime()
+    after = json.loads(paths.state.read_text(encoding="utf-8"))[
+        "model_metadata_fingerprint"
+    ]
+    assert selected == launcher.RuntimeSelection(paths.runtime, paths.python, paths.log)
+    assert hashed == [model]
+    assert after != before
+
+
+def test_interruption_after_runtime_publish_recovers_staged_venv_offline(
+    monkeypatch, tmp_path
+):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    _make_repo(paths.runtime)
+    _write_model_inventory(launcher, paths.runtime)
+    stage = tmp_path / ".bootstrap-interrupted"
+    staged_python = stage / "venv" / paths.python.relative_to(paths.venv)
+    staged_python.parent.mkdir(parents=True)
+    staged_python.write_text("python", encoding="utf-8")
+    launcher._write_publish_journal(paths, stage)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        launcher,
+        "_download_verified",
+        lambda *a, **k: pytest.fail("published cache must recover offline"),
+    )
+    assert launcher._ensure_managed_runtime() == launcher.RuntimeSelection(
+        paths.runtime, paths.python, paths.log
+    )
+    assert paths.state.is_file() and not paths.journal.exists()
+
+
+def test_interruption_after_venv_publish_reconstructs_state_offline(
+    monkeypatch, tmp_path
+):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    _prepare_complete_runtime(launcher, paths)
+    stage = tmp_path / ".bootstrap-interrupted"
+    stage.mkdir()
+    launcher._write_publish_journal(paths, stage)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        launcher,
+        "_download_verified",
+        lambda *a, **k: pytest.fail("published cache must recover offline"),
+    )
+    assert launcher._ensure_managed_runtime() == launcher.RuntimeSelection(
+        paths.runtime, paths.python, paths.log
+    )
+    assert paths.state.is_file() and not paths.journal.exists()
+    assert (
+        launcher._dependency_file(
+            tmp_path,
+            system="Linux",
+            machine="x86_64",
+            version=(3, 12),
+        )
+        == tmp_path / "requirements.txt"
+    )
+
+
+def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    _prepare_complete_runtime(launcher, paths)
+    launcher._write_state(paths)
     monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
     monkeypatch.setattr(
         launcher,
@@ -303,82 +477,23 @@ def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
 def test_state_is_invalid_when_a_declared_model_is_missing(tmp_path):
     launcher = _load_launcher()
     paths = launcher._runtime_paths(tmp_path)
-    _make_repo(paths.runtime)
-    manifest = paths.runtime / "models" / "models.lock.json"
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
-        json.dumps(
-            {
-                "models": [
-                    {"install_path": "models/runtime/missing.bin", "size": 3}
-                ],
-                "release_files": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    paths.python.parent.mkdir(parents=True)
-    paths.python.write_text("python", encoding="utf-8")
-    paths.state.parent.mkdir(parents=True)
-    paths.state.write_text(
-        json.dumps(
-            {
-                "runtime_version": launcher.RUNTIME_VERSION,
-                "runtime_sha256": launcher.RUNTIME_SHA256,
-                "model_sha256": launcher.MODEL_SHA256,
-                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-                "dependency_mode": launcher._dependency_mode(),
-                "models_verified": True,
-            }
-        ),
-        encoding="utf-8",
-    )
+    model = _prepare_complete_runtime(launcher, paths)
+    launcher._write_state(paths)
+    model.unlink()
 
     assert launcher._state_valid(paths) is False
+    assert launcher._reconstruct_state(paths) is False
 
 
 def test_state_is_invalid_when_a_declared_model_hash_mismatches(tmp_path):
     launcher = _load_launcher()
     paths = launcher._runtime_paths(tmp_path)
-    _make_repo(paths.runtime)
-    manifest = paths.runtime / "models" / "models.lock.json"
-    model = paths.runtime / "models" / "runtime" / "model.bin"
-    model.parent.mkdir(parents=True)
+    model = _prepare_complete_runtime(launcher, paths)
+    launcher._write_state(paths)
     model.write_bytes(b"bad")
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
-        json.dumps(
-            {
-                "models": [
-                    {
-                        "install_path": "models/runtime/model.bin",
-                        "size": 3,
-                        "sha256": hashlib.sha256(b"good").hexdigest(),
-                    }
-                ],
-                "release_files": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    paths.python.parent.mkdir(parents=True)
-    paths.python.write_text("python", encoding="utf-8")
-    paths.state.parent.mkdir(parents=True)
-    paths.state.write_text(
-        json.dumps(
-            {
-                "runtime_version": launcher.RUNTIME_VERSION,
-                "runtime_sha256": launcher.RUNTIME_SHA256,
-                "model_sha256": launcher.MODEL_SHA256,
-                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-                "dependency_mode": launcher._dependency_mode(),
-                "models_verified": True,
-            }
-        ),
-        encoding="utf-8",
-    )
 
     assert launcher._state_valid(paths) is False
+    assert launcher._reconstruct_state(paths) is False
 
 
 def test_failed_install_does_not_publish_completion_state(monkeypatch, tmp_path):
@@ -405,10 +520,43 @@ def test_stale_install_lock_is_reclaimed(monkeypatch, tmp_path):
     lock.write_text(json.dumps({"pid": 999999, "created": 1.0}), encoding="utf-8")
     monkeypatch.setattr(launcher, "_pid_alive", lambda pid: False)
 
-    launcher._acquire_lock(lock, timeout=0.1)
+    ownership = launcher._acquire_lock(lock, timeout=0.1)
 
     payload = json.loads(lock.read_text(encoding="utf-8"))
     assert payload["pid"] == launcher.os.getpid()
+    assert payload["token"] == ownership.token
+
+
+def test_lock_release_does_not_remove_a_replacement_owner(tmp_path):
+    launcher = _load_launcher()
+    lock = tmp_path / "state/runtime.lock"
+    ownership = launcher._acquire_lock(lock, timeout=0.1)
+    replacement = {
+        "pid": launcher.os.getpid(),
+        "created": launcher.time.time(),
+        "token": "replacement-owner",
+    }
+    lock.write_text(json.dumps(replacement), encoding="utf-8")
+    launcher._release_lock(lock, ownership)
+    assert json.loads(lock.read_text(encoding="utf-8")) == replacement
+
+
+def test_stale_lock_reclaim_preserves_a_replacement_after_observation(tmp_path):
+    launcher = _load_launcher()
+    lock = tmp_path / "state/runtime.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(
+        json.dumps({"pid": 999999, "created": 1.0, "token": "stale"}), encoding="utf-8"
+    )
+    observed = launcher._observe_lock(lock)
+    replacement = {
+        "pid": launcher.os.getpid(),
+        "created": launcher.time.time(),
+        "token": "replacement-owner",
+    }
+    lock.write_text(json.dumps(replacement), encoding="utf-8")
+    assert launcher._remove_lock_if_matches(lock, observed) is False
+    assert json.loads(lock.read_text(encoding="utf-8")) == replacement
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows process probe regression")
@@ -457,10 +605,13 @@ def test_install_runtime_runs_dependency_and_model_verification(monkeypatch, tmp
         _make_repo(destination)
         (destination / "pdf2md").mkdir()
         (destination / "pdf2md" / "__init__.py").write_text("", encoding="utf-8")
-        (destination / "models").mkdir()
-        (destination / "models" / "models.lock.json").write_text("{}", encoding="utf-8")
-        (destination / "requirements.txt").write_text("requests>=2.28\n", encoding="utf-8")
-        (destination / "requirements-lock.txt").write_text("requests==2.34.2\n", encoding="utf-8")
+        _write_model_inventory(launcher, destination)
+        (destination / "requirements.txt").write_text(
+            "requests>=2.28\n", encoding="utf-8"
+        )
+        (destination / "requirements-lock.txt").write_text(
+            "requests==2.34.2\n", encoding="utf-8"
+        )
 
     class FakeBuilder:
         def __init__(self, **kwargs):
@@ -468,7 +619,9 @@ def test_install_runtime_runs_dependency_and_model_verification(monkeypatch, tmp
 
         def create(self, destination):
             python = Path(destination) / (
-                "Scripts/python.exe" if launcher.platform.system() == "Windows" else "bin/python"
+                "Scripts/python.exe"
+                if launcher.platform.system() == "Windows"
+                else "bin/python"
             )
             python.parent.mkdir(parents=True)
             python.write_text("python", encoding="utf-8")
@@ -486,8 +639,33 @@ def test_install_runtime_runs_dependency_and_model_verification(monkeypatch, tmp
 
     assert paths.state.is_file()
     assert paths.python.is_file()
-    assert any(command[-2:] == ["--source-url", launcher.MODEL_URL] for command in commands)
+    assert any(
+        command[-2:] == ["--source-url", launcher.MODEL_URL] for command in commands
+    )
     assert any(command[-2:] == ["pdf2md.models", "verify"] for command in commands)
+
+
+def test_logged_subprocess_oserror_keeps_stage_and_log(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    log = tmp_path / "logs/bootstrap.log"
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("spawn denied")),
+    )
+    with pytest.raises(launcher.BootstrapError) as raised:
+        launcher._run_logged(
+            ["python", "-m", "pip", "install"],
+            cwd=tmp_path,
+            log=log,
+            code="dependency_failed",
+            stage="dependencies",
+        )
+    assert (raised.value.code, raised.value.stage, raised.value.log) == (
+        "dependency_failed",
+        "dependencies",
+        log,
+    )
 
 
 def test_main_uses_existing_repo_without_bootstrap(monkeypatch, tmp_path):
@@ -503,8 +681,9 @@ def test_main_uses_existing_repo_without_bootstrap(monkeypatch, tmp_path):
     monkeypatch.setattr(
         launcher.subprocess,
         "run",
-        lambda command, cwd: calls.append((command, cwd))
-        or type("Result", (), {"returncode": 0})(),
+        lambda command, cwd: (
+            calls.append((command, cwd)) or type("Result", (), {"returncode": 0})()
+        ),
     )
     monkeypatch.setattr(
         launcher.sys,
@@ -523,7 +702,9 @@ def test_python_version_is_checked_before_existing_repo_resolution(monkeypatch):
     monkeypatch.setattr(
         launcher,
         "_find_existing_repo",
-        lambda: pytest.fail("unsupported Python must fail before repository resolution"),
+        lambda: pytest.fail(
+            "unsupported Python must fail before repository resolution"
+        ),
     )
 
     with pytest.raises(launcher.BootstrapError) as raised:
@@ -547,8 +728,9 @@ def test_main_uses_managed_python_when_repo_is_absent(monkeypatch, tmp_path):
     monkeypatch.setattr(
         launcher.subprocess,
         "run",
-        lambda command, cwd: calls.append((command, cwd))
-        or type("Result", (), {"returncode": 0})(),
+        lambda command, cwd: (
+            calls.append((command, cwd)) or type("Result", (), {"returncode": 0})()
+        ),
     )
     monkeypatch.setattr(
         launcher.sys,
@@ -579,6 +761,32 @@ def test_main_prints_machine_readable_bootstrap_error(monkeypatch, capsys):
         "error": "download_failed",
         "stage": "download",
         "message": "offline",
+    }
+
+
+def test_main_reports_helper_spawn_oserror_with_dispatch_stage_and_log(
+    monkeypatch, tmp_path, capsys
+):
+    launcher = _load_launcher()
+    repo = _make_repo(tmp_path / "runtime")
+    python, log = tmp_path / "venv/python", tmp_path / "logs/bootstrap.log"
+    monkeypatch.setattr(
+        launcher,
+        "_select_runtime",
+        lambda: launcher.RuntimeSelection(repo, python, log),
+    )
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("helper missing")),
+    )
+    assert launcher.main() == 2
+    assert json.loads(capsys.readouterr().err) == {
+        "ok": False,
+        "error": "helper_failed",
+        "stage": "dispatch",
+        "message": "helper missing",
+        "log": str(log),
     }
 
 
