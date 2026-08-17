@@ -50,25 +50,15 @@ def test_workbuddy_packager_creates_portable_upload_zip(tmp_path):
             for name in archive.namelist()
             if name.endswith((".md", ".yaml", ".py", ".txt", ".json"))
         )
-        assert "yunshu-ocr-root" not in text
         assert str(ROOT.resolve()) not in text
         assert "E:\\Codex" not in text
         assert "C:\\Users\\GuMu" not in text
 ```
 
-Extend `test_readmes_route_workbuddy_users_to_the_upload_package`:
-
-```python
-def test_readmes_describe_portable_first_use_and_offline_reuse():
-    for filename in ("README.md", "AI_README.md"):
-        text = (ROOT / filename).read_text(encoding="utf-8")
-        assert "首次使用" in text
-        assert "185 MB" in text
-        assert "离线" in text
-        assert "YUNSHU_OCR_ROOT" in text
-        assert "仓库绝对路径" not in text
-        assert "重新上传" not in text
-```
+Legacy marker-name literals may remain inside the shared launcher because existing
+Codex, Claude Code, and universal installations still use those markers. The package
+contract forbids the marker ZIP member and actual machine paths, not the compatibility
+code path.
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
@@ -78,7 +68,7 @@ Run:
 python -m pytest tests/test_skill_packages.py -q
 ```
 
-Expected: the ZIP test fails because `references/yunshu-ocr-root.txt` is still present; the README test fails because current documentation still describes a repository-bound package.
+Expected: the ZIP test fails because `references/yunshu-ocr-root.txt` is still present.
 
 - [ ] **Step 3: Make only the ZIP assembly portable**
 
@@ -887,7 +877,27 @@ git commit -m "feat: dispatch PDF commands through managed runtime"
 - Modify: `AI_README.md`
 - Modify: `tests/test_skill_packages.py`
 
-- [ ] **Step 1: Copy the verified shared launcher into all four source variants**
+- [ ] **Step 1: Add the failing README portability contract test**
+
+Append to `tests/test_skill_packages.py`:
+
+```python
+def test_readmes_describe_portable_first_use_and_offline_reuse():
+    for filename in ("README.md", "AI_README.md"):
+        text = (ROOT / filename).read_text(encoding="utf-8")
+        assert "首次使用" in text
+        assert "185 MB" in text
+        assert "离线" in text
+        assert "YUNSHU_OCR_ROOT" in text
+        assert "仓库绝对路径" not in text
+        assert "重新上传" not in text
+```
+
+Run `python -m pytest tests/test_skill_packages.py::test_readmes_describe_portable_first_use_and_offline_reuse -q`.
+Expected: FAIL because the current README files still describe repository binding and
+do not contain the portable first-use contract.
+
+- [ ] **Step 2: Copy the verified shared launcher into all four source variants**
 
 Run a formatting-safe mechanical copy:
 
@@ -898,7 +908,7 @@ Copy-Item -LiteralPath skills/shared/yunshu_pdf.py -Destination skills/workbuddy
 Copy-Item -LiteralPath skills/shared/yunshu_pdf.py -Destination skills/universal/yunshu-ocr/scripts/yunshu_pdf.py -Force
 ```
 
-- [ ] **Step 2: Change WorkBuddy Skill setup instructions**
+- [ ] **Step 3: Change WorkBuddy Skill setup instructions**
 
 Replace the repository-regeneration paragraph in `skills/workbuddy/yunshu-ocr/SKILL.md` with:
 
@@ -917,7 +927,7 @@ regenerate the ZIP. Advanced users may point to an existing valid checkout with
 
 Retain the Token boundary and page-verification chain unchanged.
 
-- [ ] **Step 3: Correct the model release repository**
+- [ ] **Step 4: Correct the model release repository**
 
 Change only these fields in `models/models.lock.json`:
 
@@ -928,7 +938,7 @@ Change only these fields in `models/models.lock.json`:
 
 Do not change the asset size, archive SHA-256, model hashes, or licenses.
 
-- [ ] **Step 4: Rewrite human README WorkBuddy setup**
+- [ ] **Step 5: Rewrite human README WorkBuddy setup**
 
 Replace the repository-bound paragraphs near the top of `README.md` with text that states:
 
@@ -947,7 +957,7 @@ OCR、Markdown 生成和页码渲染均复用本地缓存并离线执行，不�
 均已完整验证。
 ```
 
-- [ ] **Step 5: Rewrite AI README WorkBuddy routing**
+- [ ] **Step 6: Rewrite AI README WorkBuddy routing**
 
 Replace the “仓库绑定” bullet in `AI_README.md` with:
 
@@ -962,7 +972,7 @@ Replace the “仓库绑定” bullet in `AI_README.md` with:
 
 Update the permission bullet so it asks only for the PDF, its output directory, the Skill, and the user cache—not a repository directory.
 
-- [ ] **Step 6: Run package, bootstrap, and binding tests**
+- [ ] **Step 7: Run package, bootstrap, and binding tests**
 
 Run:
 
@@ -972,7 +982,7 @@ python -m pytest tests/test_skill_packages.py tests/test_skill_runtime_bootstrap
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Skill and documentation changes**
+- [ ] **Step 8: Commit Skill and documentation changes**
 
 ```powershell
 git add -- skills/codex/yunshu-ocr/scripts/yunshu_pdf.py skills/claude/yunshu-ocr/scripts/yunshu_pdf.py skills/workbuddy/yunshu-ocr/scripts/yunshu_pdf.py skills/universal/yunshu-ocr/scripts/yunshu_pdf.py skills/workbuddy/yunshu-ocr/SKILL.md models/models.lock.json README.md AI_README.md tests/test_skill_packages.py
