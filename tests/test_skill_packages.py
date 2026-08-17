@@ -82,7 +82,7 @@ def test_workbuddy_manifest_has_minimum_enterprise_metadata():
         encoding="utf-8"
     )
     assert "name: yunshu-ocr" in text
-    assert "version: 1.0.0" in text
+    assert "version: 1.1.0" in text
     assert "category: document-processing" in text
     assert "author: GuMu599" in text
 

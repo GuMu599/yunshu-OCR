@@ -37,6 +37,19 @@ MODEL_SIZE = 185346805
 MODEL_SHA256 = "daa85d380551a93f0464950181c3bc29ab16525a55b3a6664108183aa49c9fb0"
 MIN_PYTHON = (3, 10)
 INSTALL_LOCK_TIMEOUT = 600.0
+RUNTIME_ALLOWED_FILES = {
+    "LICENSE",
+    "NOTICE",
+    "requirements.txt",
+    "requirements-lock.txt",
+    "models/models.lock.json",
+}
+RUNTIME_ALLOWED_PREFIXES = (
+    "pdf2md/",
+    "tools/pdf-reading/",
+    "models/production/",
+    "THIRD_PARTY_LICENSES/",
+)
 
 
 class BootstrapError(RuntimeError):
@@ -261,6 +274,20 @@ def _unsafe_member(name: str) -> bool:
     )
 
 
+def _runtime_member_declared(parts: tuple[str, ...]) -> bool:
+    if len(parts) == 1:
+        return True
+    relative = "/".join(parts[1:]).rstrip("/")
+    if relative in RUNTIME_ALLOWED_FILES:
+        return True
+    if any(f"{relative}/" == prefix for prefix in RUNTIME_ALLOWED_PREFIXES):
+        return True
+    if any(relative.startswith(prefix) for prefix in RUNTIME_ALLOWED_PREFIXES):
+        return True
+    allowed = (*RUNTIME_ALLOWED_FILES, *RUNTIME_ALLOWED_PREFIXES)
+    return any(item.startswith(f"{relative}/") for item in allowed)
+
+
 def _extract_runtime(archive_path: Path, destination: Path) -> None:
     try:
         destination.mkdir(parents=True, exist_ok=False)
@@ -278,6 +305,12 @@ def _extract_runtime(archive_path: Path, destination: Path) -> None:
                     )
                 parts = PurePosixPath(info.filename.replace("\\", "/")).parts
                 roots.add(parts[0])
+                if not _runtime_member_declared(parts):
+                    raise BootstrapError(
+                        "archive_unsafe",
+                        "extract",
+                        f"undeclared runtime ZIP member: {info.filename}",
+                    )
                 mode = info.external_attr >> 16
                 if stat.S_ISLNK(mode):
                     raise BootstrapError(
@@ -348,13 +381,21 @@ def _models_present(repo: Path) -> bool:
         try:
             raw_path = str(item["install_path"])
             expected_size = int(item["size"])
+            expected_hash = str(item["sha256"]).lower()
         except (KeyError, TypeError, ValueError):
+            return False
+        if len(expected_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in expected_hash
+        ):
             return False
         relative = PurePosixPath(raw_path.replace("\\", "/"))
         if relative.is_absolute() or PureWindowsPath(raw_path).drive or ".." in relative.parts:
             return False
         target = repo / Path(*relative.parts)
-        if not target.is_file() or target.stat().st_size != expected_size:
+        try:
+            if not _file_matches(target, expected_size, expected_hash):
+                return False
+        except OSError:
             return False
     return True
 
@@ -413,6 +454,25 @@ def _pid_alive(pid: int) -> bool:
         return False
     if pid == os.getpid():
         return True
+    if os.name == "nt":
+        import ctypes
+
+        process_query_limited_information = 0x1000
+        error_access_denied = 5
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        handle = kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() == error_access_denied
     try:
         os.kill(pid, 0)
     except PermissionError:
@@ -442,7 +502,10 @@ def _acquire_lock(path: Path, timeout: float = INSTALL_LOCK_TIMEOUT) -> None:
             return
         except FileExistsError:
             owner_alive = _lock_owner_alive(path)
-            invalid_age = time.time() - path.stat().st_mtime if path.exists() else 0.0
+            try:
+                invalid_age = time.time() - path.stat().st_mtime
+            except FileNotFoundError:
+                continue
             if owner_alive is False or (owner_alive is None and invalid_age >= 5.0):
                 path.unlink(missing_ok=True)
                 continue
@@ -554,44 +617,50 @@ def _install_runtime(paths: RuntimePaths) -> None:
         shutil.rmtree(stage_parent, ignore_errors=True)
 
 
-def _ensure_managed_runtime() -> RuntimeSelection:
+def _require_supported_python() -> None:
     if sys.version_info < MIN_PYTHON:
         raise BootstrapError(
             "python_unsupported",
             "preflight",
             "Python 3.10 or newer is required",
         )
-    root = _cache_root()
+
+
+def _ensure_managed_runtime() -> RuntimeSelection:
+    _require_supported_python()
     try:
+        root = _cache_root()
         root.mkdir(parents=True, exist_ok=True)
+        paths = _runtime_paths(root)
+        if _state_valid(paths):
+            return RuntimeSelection(paths.runtime, paths.python)
+
+        _acquire_lock(paths.lock)
+        try:
+            _cleanup_staging(paths.root)
+            if not _state_valid(paths):
+                paths.state.unlink(missing_ok=True)
+                shutil.rmtree(paths.runtime, ignore_errors=True)
+                shutil.rmtree(paths.venv, ignore_errors=True)
+                _install_runtime(paths)
+            if not _state_valid(paths):
+                raise BootstrapError(
+                    "runtime_invalid",
+                    "verify",
+                    "managed runtime did not pass completion checks",
+                    paths.log,
+                )
+            return RuntimeSelection(paths.runtime, paths.python)
+        finally:
+            paths.lock.unlink(missing_ok=True)
+    except BootstrapError:
+        raise
     except OSError as exc:
-        raise BootstrapError("cache_unavailable", "preflight", str(exc)) from exc
-
-    paths = _runtime_paths(root)
-    if _state_valid(paths):
-        return RuntimeSelection(paths.runtime, paths.python)
-
-    _acquire_lock(paths.lock)
-    try:
-        _cleanup_staging(paths.root)
-        if not _state_valid(paths):
-            paths.state.unlink(missing_ok=True)
-            shutil.rmtree(paths.runtime, ignore_errors=True)
-            shutil.rmtree(paths.venv, ignore_errors=True)
-            _install_runtime(paths)
-        if not _state_valid(paths):
-            raise BootstrapError(
-                "runtime_invalid",
-                "verify",
-                "managed runtime did not pass completion checks",
-                paths.log,
-            )
-        return RuntimeSelection(paths.runtime, paths.python)
-    finally:
-        paths.lock.unlink(missing_ok=True)
+        raise BootstrapError("cache_unavailable", "cache", str(exc)) from exc
 
 
 def _select_runtime() -> RuntimeSelection:
+    _require_supported_python()
     repo = _find_existing_repo()
     if repo is not None:
         return RuntimeSelection(repo=repo, python=Path(sys.executable))

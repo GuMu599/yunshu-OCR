@@ -1,5 +1,5 @@
 name: yunshu-ocr
-version: 1.0.0
+version: 1.1.0
 description: "云枢 OCR：PDF 转换、OCR、Markdown 生成和页码核验在本地完成，不消耗 LLM Token 额度"
 category: document-processing
 author: GuMu599

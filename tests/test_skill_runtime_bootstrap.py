@@ -29,7 +29,11 @@ def _make_repo(path: Path) -> Path:
     return path
 
 
-def _runtime_zip(*, unsafe: str | None = None) -> bytes:
+def _runtime_zip(
+    *,
+    unsafe: str | None = None,
+    extra_member: str | None = None,
+) -> bytes:
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
         if unsafe is not None:
@@ -41,6 +45,8 @@ def _runtime_zip(*, unsafe: str | None = None) -> bytes:
             archive.writestr(f"{prefix}/requirements-lock.txt", "requests==2.34.2\n")
             archive.writestr(f"{prefix}/pdf2md/__init__.py", "")
             archive.writestr(f"{prefix}/models/models.lock.json", "{}")
+            if extra_member is not None:
+                archive.writestr(f"{prefix}/{extra_member}", "unexpected")
     return stream.getvalue()
 
 
@@ -205,6 +211,18 @@ def test_safe_extract_rejects_unsafe_members(tmp_path, member):
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_safe_extract_rejects_undeclared_runtime_members(tmp_path):
+    launcher = _load_launcher()
+    archive = tmp_path / "unexpected.zip"
+    archive.write_bytes(_runtime_zip(extra_member="unexpected/payload.exe"))
+
+    with pytest.raises(launcher.BootstrapError) as raised:
+        launcher._extract_runtime(archive, tmp_path / "runtime")
+
+    assert raised.value.code == "archive_unsafe"
+    assert "undeclared" in str(raised.value)
+
+
 def test_dependency_file_uses_exact_lock_only_for_verified_platform(tmp_path):
     launcher = _load_launcher()
 
@@ -241,7 +259,11 @@ def test_completed_runtime_is_reused_without_download(monkeypatch, tmp_path):
         json.dumps(
             {
                 "models": [
-                    {"install_path": "models/runtime/model.bin", "size": 3}
+                    {
+                        "install_path": "models/runtime/model.bin",
+                        "size": 3,
+                        "sha256": hashlib.sha256(b"abc").hexdigest(),
+                    }
                 ],
                 "release_files": [],
             }
@@ -315,6 +337,50 @@ def test_state_is_invalid_when_a_declared_model_is_missing(tmp_path):
     assert launcher._state_valid(paths) is False
 
 
+def test_state_is_invalid_when_a_declared_model_hash_mismatches(tmp_path):
+    launcher = _load_launcher()
+    paths = launcher._runtime_paths(tmp_path)
+    _make_repo(paths.runtime)
+    manifest = paths.runtime / "models" / "models.lock.json"
+    model = paths.runtime / "models" / "runtime" / "model.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"bad")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "install_path": "models/runtime/model.bin",
+                        "size": 3,
+                        "sha256": hashlib.sha256(b"good").hexdigest(),
+                    }
+                ],
+                "release_files": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.python.parent.mkdir(parents=True)
+    paths.python.write_text("python", encoding="utf-8")
+    paths.state.parent.mkdir(parents=True)
+    paths.state.write_text(
+        json.dumps(
+            {
+                "runtime_version": launcher.RUNTIME_VERSION,
+                "runtime_sha256": launcher.RUNTIME_SHA256,
+                "model_sha256": launcher.MODEL_SHA256,
+                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "dependency_mode": launcher._dependency_mode(),
+                "models_verified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert launcher._state_valid(paths) is False
+
+
 def test_failed_install_does_not_publish_completion_state(monkeypatch, tmp_path):
     launcher = _load_launcher()
     monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
@@ -343,6 +409,25 @@ def test_stale_install_lock_is_reclaimed(monkeypatch, tmp_path):
 
     payload = json.loads(lock.read_text(encoding="utf-8"))
     assert payload["pid"] == launcher.os.getpid()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process probe regression")
+def test_pid_probe_does_not_use_os_kill_on_windows(monkeypatch):
+    launcher = _load_launcher()
+    process = launcher.subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
+    try:
+        monkeypatch.setattr(
+            launcher.os,
+            "kill",
+            lambda *args: pytest.fail("Windows liveness checks must not call os.kill"),
+        )
+        assert launcher._pid_alive(process.pid) is True
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 def test_cleanup_staging_removes_only_bootstrap_directories(tmp_path):
@@ -432,6 +517,22 @@ def test_main_uses_existing_repo_without_bootstrap(monkeypatch, tmp_path):
     assert calls[0][0][1] == str(repo / "tools" / "pdf-reading" / "pdf2md.py")
 
 
+def test_python_version_is_checked_before_existing_repo_resolution(monkeypatch):
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, "version_info", (3, 9, 9))
+    monkeypatch.setattr(
+        launcher,
+        "_find_existing_repo",
+        lambda: pytest.fail("unsupported Python must fail before repository resolution"),
+    )
+
+    with pytest.raises(launcher.BootstrapError) as raised:
+        launcher._select_runtime()
+
+    assert raised.value.code == "python_unsupported"
+    assert raised.value.stage == "preflight"
+
+
 def test_main_uses_managed_python_when_repo_is_absent(monkeypatch, tmp_path):
     launcher = _load_launcher()
     repo = _make_repo(tmp_path / "runtime")
@@ -479,3 +580,21 @@ def test_main_prints_machine_readable_bootstrap_error(monkeypatch, capsys):
         "stage": "download",
         "message": "offline",
     }
+
+
+def test_main_reports_cache_write_errors_as_machine_readable_json(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    launcher = _load_launcher()
+    (tmp_path / "state").write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_find_existing_repo", lambda: None)
+    monkeypatch.setattr(launcher, "_cache_root", lambda: tmp_path)
+
+    assert launcher.main() == 2
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["ok"] is False
+    assert payload["error"] == "cache_unavailable"
+    assert payload["stage"] == "cache"
