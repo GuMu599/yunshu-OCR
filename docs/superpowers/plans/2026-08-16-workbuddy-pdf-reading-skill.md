@@ -36,12 +36,12 @@ def test_workbuddy_packager_creates_uploadable_repository_bound_zip(tmp_path):
     artifact = installer.package_workbuddy(tmp_path / "yunshu-ocr-workbuddy.zip")
     with zipfile.ZipFile(artifact) as archive:
         assert set(archive.namelist()) == {
-            "yunshu-ocr/SKILL.md",
-            "yunshu-ocr/manifest.yaml",
-            "yunshu-ocr/.yunshu-ocr-root",
-            "yunshu-ocr/scripts/yunshu_pdf.py",
+            "SKILL.md",
+            "manifest.yaml",
+            "references/yunshu-ocr-root.txt",
+            "scripts/yunshu_pdf.py",
         }
-        assert Path(archive.read("yunshu-ocr/.yunshu-ocr-root").decode()).resolve() == ROOT.resolve()
+        assert Path(archive.read("references/yunshu-ocr-root.txt").decode()).resolve() == ROOT.resolve()
 
 
 def test_workbuddy_packager_refuses_to_overwrite_without_force(tmp_path):
@@ -64,10 +64,10 @@ def test_readmes_route_workbuddy_users_to_the_upload_package():
 The ZIP test must assert this exact logical layout:
 
 ```text
-yunshu-ocr/SKILL.md
-yunshu-ocr/manifest.yaml
-yunshu-ocr/.yunshu-ocr-root
-yunshu-ocr/scripts/yunshu_pdf.py
+SKILL.md
+manifest.yaml
+references/yunshu-ocr-root.txt
+scripts/yunshu_pdf.py
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -128,10 +128,10 @@ def package_workbuddy(destination: str | Path | None = None, *, force: bool = Fa
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(source / "SKILL.md", "yunshu-ocr/SKILL.md")
-        archive.write(source / "manifest.yaml", "yunshu-ocr/manifest.yaml")
-        archive.write(SKILLS / "shared" / "yunshu_pdf.py", "yunshu-ocr/scripts/yunshu_pdf.py")
-        archive.writestr("yunshu-ocr/.yunshu-ocr-root", str(ROOT.resolve()))
+        archive.write(source / "SKILL.md", "SKILL.md")
+        archive.write(source / "manifest.yaml", "manifest.yaml")
+        archive.write(SKILLS / "shared" / "yunshu_pdf.py", "scripts/yunshu_pdf.py")
+        archive.writestr("references/yunshu-ocr-root.txt", str(ROOT.resolve()))
     return target
 ```
 
@@ -201,7 +201,8 @@ Expected: JSON reports `dist/yunshu-ocr-workbuddy.zip` and WorkBuddy upload inst
 
 - [ ] **Step 2: Inspect the ZIP**
 
-Verify the four required entries, parse `manifest.yaml`, and confirm `.yunshu-ocr-root` resolves to the current repository.
+Verify the four required entries, parse `manifest.yaml`, confirm no hidden dotfiles are
+present, and confirm `references/yunshu-ocr-root.txt` resolves to the current repository.
 
 - [ ] **Step 3: Run regression tests**
 

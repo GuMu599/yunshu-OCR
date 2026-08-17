@@ -2,11 +2,44 @@
 
 独立、离线、零 token 的 PDF OCR 与 PDF→Markdown 工具集。
 
+## 选择你的 Agent Skill
+
+先下载或克隆本仓库，再按正在使用的 Agent 选择一个版本。四版能力相同，只是安装或上传
+方式和平台提示不同；不需要精度初始化，全部使用最高精度转换。
+
+| 你使用的 Agent | 下载目录 | 安装命令 |
+|---|---|---|
+| **Codex** | [`skills/codex/yunshu-ocr`](skills/codex/yunshu-ocr) | `python skills/install.py codex` |
+| **Claude Code** | [`skills/claude/yunshu-ocr`](skills/claude/yunshu-ocr) | `python skills/install.py claude` |
+| **腾讯 WorkBuddy** | [`skills/workbuddy/yunshu-ocr`](skills/workbuddy/yunshu-ocr) | `python skills/install.py workbuddy` |
+| **其他支持 Agent Skills 的 Agent** | [`skills/universal/yunshu-ocr`](skills/universal/yunshu-ocr) | `python skills/install.py universal` |
+
+Codex、Claude Code 和通用版安装器不会覆盖已有同名 Skill；如平台使用自定义技能目录，
+可追加 `--dest "<你的技能目录>/yunshu-ocr"`。安装后新建一个 Agent 任务，让平台重新发现
+Skill。
+
+WorkBuddy 使用上传包：运行命令后得到 `dist/yunshu-ocr-workbuddy.zip`，在 WorkBuddy 中进入
+**专家·技能·连接器 → 添加技能 → 上传技能**并选择该文件。这个小型 ZIP 与当前仓库路径绑定；
+请保留下载后的仓库位置。如果移动或重命名仓库，回到新位置执行
+`python skills/install.py workbuddy --force`，再重新上传生成的包。个人上传以根目录
+`SKILL.md` 为核心，包内同时包含 WorkBuddy Enterprise 使用的 `manifest.yaml`。
+
+Skill 负责自动路由 PDF 阅读，但转换引擎仍需本仓库的依赖和模型。首次使用前执行：
+
+```powershell
+python -m pip install -r requirements-lock.txt
+python -m pdf2md.models install
+python -m pdf2md.models verify
+```
+
+Agent 看到 PDF 后遵循同一个效果契约：**用户操作原始 PDF，Agent 优先阅读绑定的
+Markdown；Markdown 不可靠时先定位 PDF 局部，再回读对应整页和相邻页。**
+
 ## PDF 内容处理入口
 
 > **当任务涉及阅读、总结、检索、比较、引用或回答 PDF 内容时，请先阅读 [`AI_README.md`](AI_README.md)，再按 [`tools/pdf-reading/README.md`](tools/pdf-reading/README.md) 的流程处理。**
 >
-> 首选流程：`ensure` PDF → 读取生成的 Markdown → 只有内容不足时再按 `layout.json` 坐标局部 `render`。转换失败才直接读取 PDF。
+> 首选流程：`ensure` PDF → 读取生成的 Markdown → `locate` 页码/bbox → 局部 `render` → 必要时 `render-page` 整页。转换失败也可直接按页读取 PDF。
 
 ## 我们解决的用户痛点
 
@@ -16,7 +49,7 @@
 | **表格识别不准**：数据表内容丢失、单元格错位、图片型表格无法提取 | 策略阶梯（原生几何 → PyMuPDF → OCR 几何 → SLANet 模型 → 图片+标记），质量门控绝不硬猜；位图表可经 OCR 重建转 MD |
 | **公式难恢复**：扫描件公式、LaTeX 排版文字层损坏 | pix2tex 优先，RapidOCR + 符号映射兜底 |
 | **隐私与成本**：在线 OCR/LLM 有泄露与费用顾虑 | **全链路离线、CPU 可跑、不消耗任何 LLM token** |
-| **溯源缺失**：转换结果无法对应回 PDF 原文位置 | `layout.json` 逐元素记录 `page` + `bbox_pdf`，可按需渲染定位 |
+| **溯源缺失**：转换结果无法对应回 PDF 原文位置 | `binding.json` 固定 PDF 内容哈希，`layout.json` 记录 `page` + `bbox_pdf`；局部不足时可回读整页 |
 
 本仓库由两个协同组件组成，均可单独使用：
 
@@ -74,7 +107,7 @@ yunshu-OCR/
 │   └── resource_limits.py        #   内存/DPI/批量页资源策略
 │   └── pdf-reading/              #   PDF↔Markdown 绑定读取工具
 │       ├── README.md              #   使用流程与安全边界
-│       └── pdf2md.py             #   ensure/info/render，输出 JSON
+│       └── pdf2md.py             #   ensure/info/locate/render/render-page，输出 JSON
 │
 ├── models/models.lock.json       # 固定 Release、文件大小与 SHA-256
 ├── models/production/

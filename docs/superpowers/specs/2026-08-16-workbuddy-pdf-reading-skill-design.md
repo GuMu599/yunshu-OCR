@@ -26,10 +26,11 @@ to use the highest-accuracy conversion path by default.
 ## Official WorkBuddy Constraints
 
 - WorkBuddy users install a local skill from **Experts, Skills and Connectors > Add
-  Skill > Upload Skill**. The package must expose `SKILL.md` at its root.
-- WorkBuddy Enterprise administration documents additionally define
-  `manifest.yaml` for version and metadata. The package includes this file so the same
-  artifact can be used in personal and enterprise upload flows.
+  Skill > Upload Skill**. The ZIP must expose `SKILL.md` directly at its root.
+- Personal WorkBuddy and SkillHub flows use root-level `SKILL.md` as the core contract.
+  WorkBuddy Enterprise administration documents additionally define `manifest.yaml`
+  for version and metadata. The package includes it as enterprise compatibility
+  metadata, not as a personal-upload requirement.
 - Skills operate on local files only within the user's granted workspace and
   permissions. The Yunshu skill must not claim unrestricted filesystem access.
 - WorkBuddy may request confirmation before running scripts or external programs.
@@ -52,16 +53,18 @@ Generated artifact:
 
 ```text
 dist/yunshu-ocr-workbuddy.zip
-└── yunshu-ocr/
-    ├── SKILL.md
-    ├── manifest.yaml
-    ├── .yunshu-ocr-root
-    └── scripts/
-        └── yunshu_pdf.py
+├── SKILL.md
+├── manifest.yaml
+├── references/
+│   └── yunshu-ocr-root.txt
+└── scripts/
+    └── yunshu_pdf.py
 ```
 
 `python skills/install.py workbuddy` generates the ZIP. During packaging it writes the
-absolute path of the current Yunshu-OCR checkout to `.yunshu-ocr-root`. WorkBuddy can
+absolute path of the current Yunshu-OCR checkout to `references/yunshu-ocr-root.txt`.
+The ordinary `.txt` file is accepted by WorkBuddy's uploader; hidden dotfiles are not.
+WorkBuddy can
 unpack the small skill wherever it chooses, while the launcher still resolves the
 downloaded repository, its Python modules, dependencies, and locally installed models.
 
