@@ -158,3 +158,14 @@ def test_readmes_route_workbuddy_users_to_the_upload_package():
         assert "WorkBuddy" in text
         assert "python skills/install.py workbuddy" in text
         assert "yunshu-ocr-workbuddy.zip" in text
+
+
+def test_readmes_describe_portable_first_use_and_offline_reuse():
+    for filename in ("README.md", "AI_README.md"):
+        text = (ROOT / filename).read_text(encoding="utf-8")
+        assert "首次使用" in text
+        assert "185 MB" in text
+        assert "离线" in text
+        assert "YUNSHU_OCR_ROOT" in text
+        assert "ZIP 内记录生成时的仓库绝对路径" not in text
+        assert "重新上传" not in text

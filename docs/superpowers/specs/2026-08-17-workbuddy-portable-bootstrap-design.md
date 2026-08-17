@@ -42,7 +42,7 @@ The bootstrap uses immutable release coordinates embedded in the launcher:
 
 | Input | URL | Size | SHA-256 |
 |---|---|---:|---|
-| Source | `https://github.com/GuMu599/yunshu-OCR/releases/download/v1.0.0/yunshu-OCR-v1.0.0-source.zip` | 412019 bytes | `4f47c511fe771e80ddecebaf075a00d236ae5daff356290095533402850873a7` |
+| Runtime | `https://github.com/GuMu599/yunshu-OCR/releases/download/runtime-v1/yunshu-ocr-runtime-v1.zip` | 349674 bytes | `f4f95dbc12ffd060ce662ca1dbc59f2d5b867ccd703183f5f829502e96f84030` |
 | Models | `https://github.com/GuMu599/yunshu-OCR/releases/download/models-v1/pdf2md-models-v1.zip` | 185346805 bytes | `daa85d380551a93f0464950181c3bc29ab16525a55b3a6664108183aa49c9fb0` |
 
 Downloads use a size limit, stream to a temporary file, and are published only after
@@ -50,10 +50,17 @@ the expected byte count and SHA-256 match. ZIP extraction rejects absolute paths
 parent traversal, symlinks, and undeclared layout. A failed or interrupted install
 must not replace a previously usable runtime.
 
+The original `v1.0.0` source Release predates the current PDF-reading boundary and does
+not contain `tools/pdf-reading/pdf2md.py`, `locate`, `render-page`, or the current binding
+validation. Implementation therefore publishes the dedicated `runtime-v1` archive from
+the verified runtime allowlist. It contains the current engine, page helper, adapters,
+dependency manifests, and license notices, but no tests, model weights, Skill launcher,
+or generated files. Keeping the launcher outside this archive avoids a self-referential
+archive hash.
+
 The repository's `models/models.lock.json` release coordinates are updated from the
 obsolete `cancelGuMu/yunshu-OCR` location to `GuMu599/yunshu-OCR`. The bootstrap also
-passes the fixed model URL explicitly so the immutable v1.0.0 source archive remains
-usable even if its embedded manifest contains the old repository name.
+passes the fixed model URL explicitly.
 
 ## Package Layout
 
@@ -106,12 +113,12 @@ installation:
 <cache>/
 ├── downloads/
 ├── logs/
-├── runtime/v1.0.0/
+├── runtime/runtime-v1/
 │   ├── pdf2md/
 │   ├── models/
 │   └── tools/pdf-reading/pdf2md.py
-├── venv/v1.0.0-py<major><minor>/
-└── state/v1.0.0-py<major><minor>.json
+├── venv/runtime-v1-py<major><minor>/
+└── state/runtime-v1-py<major><minor>.json
 ```
 
 The state file records the source and model release identifiers and hashes, selected
@@ -129,7 +136,7 @@ launcher follows one flow:
    environment's Python.
 3. If it is absent, acquire a version-specific install lock and recheck because
    another process may have completed installation.
-4. Download and verify the fixed source archive, safely extract it into a staging
+4. Download and verify the fixed runtime archive, safely extract it into a staging
    directory, and validate the expected helper and requirement files.
 5. Create a versioned virtual environment.
 6. Upgrade packaging tools inside that environment and install dependencies:

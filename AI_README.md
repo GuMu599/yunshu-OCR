@@ -42,12 +42,20 @@
 - **安装方式**：在 WorkBuddy 打开“专家·技能·连接器 → 添加技能 → 上传技能”，选择 ZIP；
   不要猜测或写入未公开的 WorkBuddy 隐藏安装目录。
 - **权限边界**：使用 WorkBuddy 暴露的 PDF 附件路径或用户授权工作区路径；运行本地 Python
-  或读取仓库时如出现确认，只申请该 PDF 和 Yunshu-OCR 仓库所需权限，不默认申请 Full Access。
+  时如出现确认，只申请 Skill、该 PDF、输出目录和用户缓存目录所需权限，不默认申请 Full Access。
+- **首次使用**：启动器自动下载固定的 `runtime-v1` 运行时、校验大小与 SHA-256、创建隔离
+  Python 环境并安装约 **185 MB** 的 `models-v1` 模型包；需要 Python 3.10+ 和网络连接。
+- **离线复用**：首次安装成功后，`ensure`、`locate`、`render` 和 `render-page` 复用系统用户
+  缓存，正常 PDF 转换与页码核验不再联网，也不消耗 LLM Token。
+- **高级覆盖**：仅当用户主动提供现有有效仓库时使用 `YUNSHU_OCR_ROOT`；不要要求普通用户
+  手动克隆仓库、保留生成机器路径或重新打包。
+- **错误处理**：初始化失败时读取 JSON 中的 `error`、`stage` 和 `log`，说明具体的 Python、
+  网络、权限、依赖或模型问题，修复后重试原命令。
 - **Agent 行为**：运行包内启动器完成
   `ensure → Markdown → locate → render → render-page → 相邻页`。用户继续处理原 PDF；PDF
   原始视觉内容与 Markdown 冲突时以 PDF 为准。
-- **仓库绑定**：ZIP 内记录生成时的仓库绝对路径。仓库移动、重命名或删除后，应在仓库新位置
-  运行 `python skills/install.py workbuddy --force` 并重新上传。不要把其他机器生成的包视为可移植包。
+- **验证边界**：Windows 已做实际环境验证；macOS/Linux 当前仅声明跨平台路径兼容和自动化
+  策略测试，真实平台 PDF 转换通过前不得宣称三平台均已完整验证。
 
 ### 4. 通用版
 
@@ -65,8 +73,8 @@
 2. 只选择对应的一版，不要同时安装四版。
 3. WorkBuddy 必须选择专用上传包，不要把 `~/.agents/skills` 或 `.codebuddy/skills` 猜成其安装目录。
 4. 无法确认宿主类型时选择通用版，并使用宿主文档指定的 Skill 目录作为 `--dest`。
-5. 如果目标目录或上传列表已有同名 Skill，不要静默覆盖；先说明冲突，WorkBuddy 重打包时
-   仅在明确需要时使用 `--force`。
+5. 如果目标目录或上传列表已有同名 Skill，不要静默覆盖；先说明冲突。仅在用户明确要求
+   覆盖本地生成的 WorkBuddy ZIP 时使用 `--force`。
 6. 安装或上传完成后提醒用户新建任务或重启宿主，使 Skill 被重新发现。
 
 ## PDF 内容处理首选入口

@@ -4,11 +4,32 @@
 
 **Goal:** Make the WorkBuddy Skill ZIP portable across machines by removing its absolute repository marker and automatically installing a verified, versioned Yunshu-OCR runtime on first use for later offline PDF processing.
 
-**Architecture:** Keep `skills/shared/yunshu_pdf.py` as the single launcher source copied into all host variants. The launcher first resolves explicit or legacy local repositories, then falls back to a versioned OS cache where it securely downloads the fixed v1.0.0 source archive, creates a virtual environment, installs dependencies and verified models, records completion state, and dispatches the original PDF command with the managed Python. `skills/install.py` only assembles the small WorkBuddy ZIP and never performs runtime setup.
+**Architecture:** Keep `skills/shared/yunshu_pdf.py` as the single launcher source copied into all host variants. The launcher first resolves explicit or legacy local repositories, then falls back to a versioned OS cache where it securely downloads the fixed `runtime-v1` archive, creates a virtual environment, installs dependencies and verified models, records completion state, and dispatches the original PDF command with the managed Python. `skills/install.py` only assembles the small WorkBuddy ZIP and never performs runtime setup.
 
 **Tech Stack:** Python 3.10+, standard library (`hashlib`, `json`, `os`, `platform`, `shutil`, `subprocess`, `tempfile`, `time`, `urllib.request`, `venv`, `zipfile`), pytest, GitHub Releases.
 
 ---
+
+## Execution Correction
+
+Repository inspection during implementation proved that the previously selected
+`v1.0.0` source archive predates `tools/pdf-reading/pdf2md.py` and lacks the current
+`locate`, `render-page`, and binding behavior. The runtime input is therefore the
+dedicated immutable Release below; it was built from a runtime-only allowlist so the
+launcher hash is not self-referential:
+
+```text
+tag: runtime-v1
+asset: yunshu-ocr-runtime-v1.zip
+size: 349674
+sha256: f4f95dbc12ffd060ce662ca1dbc59f2d5b867ccd703183f5f829502e96f84030
+url: https://github.com/GuMu599/yunshu-OCR/releases/download/runtime-v1/yunshu-ocr-runtime-v1.zip
+```
+
+For Tasks 2–5, the implemented names are `RUNTIME_URL`, `RUNTIME_SIZE`,
+`RUNTIME_SHA256`, `_extract_runtime`, and the state key `runtime_sha256`. Those names
+supersede the earlier `SOURCE_*`, `_extract_source`, and `source_sha256` snippets in
+this plan. The model Release coordinates remain unchanged.
 
 ## File Map
 
