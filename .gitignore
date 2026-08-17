@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 tmp/
+.worktrees/
 
 # 模型权重和 Release 构建产物不提交 git；由固定版本的 GitHub Release 安装
 models/production/rapidocr-adapter/rapidocr/models/*.onnx
