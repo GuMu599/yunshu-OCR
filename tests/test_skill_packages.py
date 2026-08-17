@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import sys
 import zipfile
 from pathlib import Path
 
@@ -105,11 +107,11 @@ def test_workbuddy_packager_creates_portable_upload_zip(tmp_path):
 
     assert artifact == (tmp_path / "yunshu-ocr-workbuddy.zip").resolve()
     with zipfile.ZipFile(artifact) as archive:
-        assert set(archive.namelist()) == {
+        assert archive.namelist() == [
             "SKILL.md",
             "manifest.yaml",
             "scripts/yunshu_pdf.py",
-        }
+        ]
         assert all(
             not any(part.startswith(".") for part in Path(name).parts)
             for name in archive.namelist()
@@ -120,6 +122,23 @@ def test_workbuddy_packager_creates_portable_upload_zip(tmp_path):
         assert str(ROOT.resolve()) not in decoded_text
         assert r"E:\Codex" not in decoded_text
         assert r"C:\Users\GuMu" not in decoded_text
+
+
+def test_workbuddy_cli_omits_repository_and_keeps_upload_hint(monkeypatch, tmp_path, capsys):
+    installer = _load_installer()
+    artifact = tmp_path / "yunshu-ocr-workbuddy.zip"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install.py", "workbuddy", "--dest", str(artifact)],
+    )
+
+    assert installer.main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact"] == str(artifact.resolve())
+    assert "repository" not in payload
+    assert "Upload Skill" in payload["hint"]
 
 
 def test_workbuddy_packager_refuses_to_overwrite_without_force(tmp_path):
